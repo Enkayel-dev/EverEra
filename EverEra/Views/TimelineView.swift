@@ -45,14 +45,16 @@ struct TimelineMainView: View {
     @State private var snappedRowID: String?
     /// Event IDs whose start date matches the currently snapped date.
     @State private var snappedEventIDs: Set<UUID> = []
+    /// The event the user explicitly tapped/selected — drives auto-scroll + expand.
+    @State private var selectedEventID: UUID?
+    /// Debounce timer to reduce snap change frequency
+    @State private var snapDebounceTask: Task<Void, Never>?
+    /// ScrollViewReader proxy stored so selectEvent can trigger programmatic scroll.
+    @State private var scrollProxy: ScrollViewProxy?
 
     // Derived flat list of all events from all entities
     private var allEvents: [LSEvent] {
         entities.flatMap { $0.events }
-    }
-
-    private var expandedID: UUID? {
-        cardStates.first(where: { $0.value == .expanded })?.key
     }
 
     // MARK: Computed timeline data
@@ -110,7 +112,33 @@ struct TimelineMainView: View {
         }
         // Auto-promote/demote cards when snap target changes.
         .onChange(of: snappedRowID) { oldID, newID in
-            handleSnapChange(from: oldID, to: newID)
+            // Only process if the ID actually changed
+            guard oldID != newID else { return }
+            
+            // Cancel any pending snap change
+            snapDebounceTask?.cancel()
+            
+            // When user explicitly selects an event, apply immediately
+            // Otherwise debounce to reduce scroll jank
+            if selectedEventID != nil {
+                handleSnapChange(from: oldID, to: newID)
+            } else {
+                snapDebounceTask = Task {
+                    try? await Task.sleep(for: .milliseconds(100))
+                    guard !Task.isCancelled else { return }
+                    await MainActor.run {
+                        handleSnapChange(from: oldID, to: newID)
+                    }
+                }
+            }
+        }
+        // Auto-expand card when an event is selected.
+        // The scroll is handled by selectEvent(_:proxy:) directly.
+        .onChange(of: selectedEventID) { _, newID in
+            guard let newID else { return }
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+                cardStates[newID] = .expanded
+            }
         }
     }
 
@@ -143,45 +171,58 @@ struct TimelineMainView: View {
             let cardLeft = labelArea + CGFloat(lanes.numLanes) * laneWidth + cardGap
             let cardWidth = max(geo.size.width - cardLeft - 16, 200)
 
-            ScrollView(.vertical, showsIndicators: true) {
-                LazyVStack(spacing: 0) {
-                    ForEach(timelineRows) { row in
-                        switch row {
-                        case .emptyMonth(let year, let month):
-                            EmptyMonthRow(year: year, month: month)
-                                .id(row.id)
+            ZStack(alignment: .top) {
+                ScrollViewReader { proxy in
+                    ScrollView(.vertical, showsIndicators: true) {
+                        LazyVStack(spacing: 0) {
+                            ForEach(timelineRows) { row in
+                                switch row {
+                                case .emptyMonth(let year, let month):
+                                    EmptyMonthRow(year: year, month: month)
+                                        .id(row.id)
 
-                        case .eventDate(let dateStr, let date):
-                            EventDateRow(
-                                dateStr: dateStr,
-                                date: date,
-                                events: eventsByDate[dateStr] ?? [],
-                                laneAssignments: lanes.assignments,
-                                numLanes: lanes.numLanes,
-                                cardStates: $cardStates,
-                                labelArea: labelArea,
-                                laneWidth: laneWidth,
-                                cardWidth: cardWidth,
-                                cardLeft: cardLeft,
-                                snappedEventIDs: snappedEventIDs,
-                                onCycleState: { cycleState(for: $0) },
-                                onDismiss: { id in
-                                    withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
-                                        cardStates[id] = .collapsed
-                                    }
-                                },
-                                modelContext: modelContext
-                            )
-                            .id(row.id)
+                                case .eventDate(let dateStr, let date):
+                                    EventDateRow(
+                                        dateStr: dateStr,
+                                        date: date,
+                                        events: eventsByDate[dateStr] ?? [],
+                                        laneAssignments: lanes.assignments,
+                                        numLanes: lanes.numLanes,
+                                        cardStates: $cardStates,
+                                        labelArea: labelArea,
+                                        laneWidth: laneWidth,
+                                        cardWidth: cardWidth,
+                                        cardLeft: cardLeft,
+                                        snappedEventIDs: snappedEventIDs,
+                                        onSelect: { selectEvent($0, proxy: proxy) },
+                                        onCycleState: { cycleState(for: $0) },
+                                        onDismiss: { id in
+                                            withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+                                                cardStates[id] = .collapsed
+                                                if selectedEventID == id { selectedEventID = nil }
+                                            }
+                                        },
+                                        modelContext: modelContext
+                                    )
+                                    .id(row.id)
+                                }
+                            }
                         }
+                        .scrollTargetLayout()
                     }
+                    .scrollTargetBehavior(.viewAligned(limitBehavior: .always))
+                    .scrollPosition(id: $snappedRowID, anchor: .top)
+                    .contentMargins(.top, 52, for: .scrollContent)
+                    .contentMargins(.bottom, 300, for: .scrollContent)
+                    .scrollBounceBehavior(.basedOnSize)
+                    .onAppear { scrollProxy = proxy }
                 }
-                .scrollTargetLayout()
+
+                // Sticky date header — consistent border, shows only the current snapped date
+                StickyDateHeader(snappedRowID: snappedRowID, timelineRows: timelineRows)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 8)
             }
-            .scrollTargetBehavior(.viewAligned(limitBehavior: .always))
-            .scrollPosition(id: $snappedRowID, anchor: .top)
-            .contentMargins(.top, 60, for: .scrollContent)
-            .contentMargins(.bottom, 300, for: .scrollContent)
         }
     }
 
@@ -200,28 +241,37 @@ struct TimelineMainView: View {
     // MARK: - Snap change handling
 
     private func handleSnapChange(from oldID: String?, to newID: String?) {
-        withAnimation(.spring(response: 0.22, dampingFraction: 0.85)) {
-            // Determine which events are at the new snapped date
-            var newSnapped: Set<UUID> = []
+        // Determine which events are at the new snapped date
+        var newSnapped: Set<UUID> = []
+        var statesToUpdate: [UUID: CardState] = [:]
 
-            if let newID, case .eventDate(let dateStr, _) = timelineRows.first(where: { $0.id == newID }) {
-                for event in (eventsByDate[dateStr] ?? []) {
-                    let startStr = event.startDate.map { TimelineHelpers.dateString(from: $0) } ?? ""
-                    if startStr == dateStr {
-                        newSnapped.insert(event.id)
-                        // Only promote if currently collapsed
-                        if cardStates[event.id] == nil || cardStates[event.id] == .collapsed {
-                            cardStates[event.id] = .summary
-                        }
+        if let newID, case .eventDate(let dateStr, _) = timelineRows.first(where: { $0.id == newID }) {
+            for event in (eventsByDate[dateStr] ?? []) {
+                let startStr = event.startDate.map { TimelineHelpers.dateString(from: $0) } ?? ""
+                if startStr == dateStr {
+                    newSnapped.insert(event.id)
+                    // Selected event stays expanded; others get summary
+                    if event.id == selectedEventID {
+                        statesToUpdate[event.id] = .expanded
+                    } else if cardStates[event.id] == nil || cardStates[event.id] == .collapsed {
+                        statesToUpdate[event.id] = .summary
                     }
                 }
             }
+        }
 
-            // Revert previously snapped events that are no longer snapped
-            for id in snappedEventIDs where !newSnapped.contains(id) {
-                if cardStates[id] == .summary {
-                    cardStates[id] = .collapsed
-                }
+        // Revert previously snapped events that are no longer snapped
+        for id in snappedEventIDs where !newSnapped.contains(id) {
+            if cardStates[id] == .summary {
+                statesToUpdate[id] = .collapsed
+            }
+            // Note: Don't clear selection here - let explicit user actions control it
+        }
+        
+        // Apply all state changes in a single animation transaction
+        withAnimation(.spring(response: 0.22, dampingFraction: 0.85)) {
+            for (id, state) in statesToUpdate {
+                cardStates[id] = state
             }
             snappedEventIDs = newSnapped
         }
@@ -229,13 +279,37 @@ struct TimelineMainView: View {
 
     // MARK: - Helpers
 
+    /// Select an event: programmatically scroll its date row to the top and expand.
+    private func selectEvent(_ id: UUID, proxy: ScrollViewProxy) {
+        // Find the row ID for this event's start date
+        guard let event = allEvents.first(where: { $0.id == id }),
+              let start = event.startDate else { return }
+
+        let ds = TimelineHelpers.dateString(from: start)
+        let rowID = "date-\(ds)"
+
+        // Expand the card first so the row has its final height
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+            selectedEventID = id
+            cardStates[id] = .expanded
+        }
+
+        // Use ScrollViewReader to scroll directly — avoids the viewAligned hesitancy
+        // that occurs when the snap engine resists landing on tall rows.
+        withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
+            proxy.scrollTo(rowID, anchor: .top)
+        }
+    }
+
     private func cycleState(for id: UUID) {
         withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
             let current = cardStates[id] ?? .collapsed
             switch current {
             case .collapsed: cardStates[id] = .summary
             case .summary:   cardStates[id] = .expanded
-            case .expanded:  cardStates[id] = .collapsed
+            case .expanded:
+                cardStates[id] = .collapsed
+                if selectedEventID == id { selectedEventID = nil }
             }
         }
     }
@@ -249,37 +323,74 @@ struct TimelineMainView: View {
     }()
 }
 
-// MARK: - DateMagnifyLabel
+// MARK: - DateLabel
 
-/// A date/month label that scales up with Gaussian falloff near the snap focal
-/// point at the top of the scroll view — dock-style magnification.
-private struct DateMagnifyLabel: View {
+/// A static date/month label in the left gutter — no scaling, consistent size.
+private struct DateLabel: View {
     let text: String
     let isMonth: Bool
 
-    /// Distance from viewport top to the focal point.
-    private let focalOffsetY: CGFloat = 30
-
     var body: some View {
         Text(text)
-            .font(.system(size: isMonth ? 10 : 12, weight: .bold, design: .rounded))
-            .foregroundStyle(isMonth ? .secondary : .primary)
-            .visualEffect { content, proxy in
-                let scrollBounds = proxy.bounds(of: .scrollView(axis: .vertical))
-                let labelMidY = proxy.frame(in: .global).midY
-                let focalY = (scrollBounds?.minY ?? 0) + focalOffsetY
-                let distance = abs(labelMidY - focalY)
+            .font(.system(size: isMonth ? 10 : 11, weight: isMonth ? .medium : .semibold, design: .rounded))
+            .foregroundStyle(isMonth ? .tertiary : .secondary)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+    }
+}
 
-                // Gaussian falloff
-                let sigma: CGFloat = 80
-                let mag = exp(-0.5 * pow(distance / sigma, 2))
-                let scale = 1.0 + 1.2 * mag   // max 2.2× at focal point
-                let opacity = 0.35 + 0.65 * mag
+// MARK: - StickyDateHeader
 
-                return content
-                    .scaleEffect(scale)
-                    .opacity(opacity)
-            }
+/// A fixed header pinned to the top of the timeline that shows only the
+/// currently-snapped date inside a consistent glass pill border.
+private struct StickyDateHeader: View {
+    let snappedRowID: String?
+    let timelineRows: [TimelineRow]
+
+    private static let dateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "MMM d, yyyy"
+        return f
+    }()
+
+    private static let monthFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "MMMM yyyy"
+        return f
+    }()
+
+    /// Derives a human-readable label from the snapped row ID.
+    private var label: String {
+        guard let rowID = snappedRowID else { return "" }
+        guard let row = timelineRows.first(where: { $0.id == rowID }) else { return "" }
+        switch row {
+        case .emptyMonth(let year, let month):
+            return MonthKey(year: year, month: month).label
+        case .eventDate(_, let date):
+            return Self.dateFormatter.string(from: date)
+        }
+    }
+
+    var body: some View {
+        let text = label
+        if !text.isEmpty {
+            Text(text)
+                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .foregroundStyle(.primary)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 6)
+                .background {
+                    Capsule(style: .continuous)
+                        .fill(.regularMaterial)
+                        .overlay {
+                            Capsule(style: .continuous)
+                                .strokeBorder(.primary.opacity(0.12), lineWidth: 1)
+                        }
+                        .shadow(color: .black.opacity(0.12), radius: 8, y: 2)
+                }
+                .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .top)))
+                .animation(.spring(response: 0.3, dampingFraction: 0.8), value: text)
+        }
     }
 }
 
@@ -296,7 +407,7 @@ private struct EmptyMonthRow: View {
 
     var body: some View {
         HStack {
-            DateMagnifyLabel(text: monthLabel, isMonth: true)
+            DateLabel(text: monthLabel, isMonth: true)
                 .frame(width: 160, alignment: .center)
             Spacer()
         }
@@ -320,6 +431,7 @@ private struct EventDateRow: View {
     let cardWidth: CGFloat
     let cardLeft: CGFloat
     let snappedEventIDs: Set<UUID>
+    let onSelect: (UUID) -> Void
     let onCycleState: (UUID) -> Void
     let onDismiss: (UUID) -> Void
     let modelContext: ModelContext
@@ -332,8 +444,8 @@ private struct EventDateRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
-            // Left gutter: magnifying date label
-            DateMagnifyLabel(text: Self.dateFormatter.string(from: date), isMonth: false)
+            // Left gutter: static date label
+            DateLabel(text: Self.dateFormatter.string(from: date), isMonth: false)
                 .frame(width: labelArea, alignment: .center)
                 .padding(.top, 8)
 
@@ -357,7 +469,13 @@ private struct EventDateRow: View {
                         cardType: .start,
                         state: state,
                         color: color,
-                        onTap: { onCycleState(event.id) },
+                        onTap: {
+                            if state == .collapsed {
+                                onSelect(event.id)
+                            } else {
+                                onCycleState(event.id)
+                            }
+                        },
                         onDismiss: { onDismiss(event.id) },
                         modelContext: modelContext
                     )
@@ -365,7 +483,7 @@ private struct EventDateRow: View {
                     .frame(height: cardHeight(for: state))
                 }
             }
-            .frame(maxWidth: .infinity)
+            .frame(width: cardWidth)
             .padding(.trailing, 16)
             .padding(.vertical, 4)
         }
@@ -407,10 +525,23 @@ private struct LaneDotColumn: View {
                 ZStack {
                     if let event = events.first(where: { laneAssignments[$0.id] == lane }) {
                         let isSnapped = snappedEventIDs.contains(event.id)
+                        let color = event.category.color
+
+                        // Pulsing glow halo behind the dot - simplified animation
+                        if isSnapped {
+                            TimelineView(.animation) { context in
+                                let pulse = cos(context.date.timeIntervalSinceReferenceDate * .pi) * 0.15 + 0.35
+                                Circle()
+                                    .fill(color.opacity(pulse))
+                                    .frame(width: 18, height: 18)
+                                    .blur(radius: 4)
+                            }
+                        }
+
                         Circle()
-                            .fill(event.category.color)
+                            .fill(color)
                             .frame(width: isSnapped ? 10 : 7, height: isSnapped ? 10 : 7)
-                            .shadow(color: event.category.color.opacity(isSnapped ? 0.5 : 0), radius: 4)
+                            .shadow(color: color.opacity(isSnapped ? 0.7 : 0), radius: isSnapped ? 6 : 0)
                     }
                 }
                 .frame(width: laneWidth, height: 20)
@@ -435,12 +566,23 @@ private struct LaneConnectorBackground: View {
                 if let lane = laneAssignments[event.id] {
                     let x = labelArea + CGFloat(lane) * laneWidth + laneWidth / 2
                     let isSnapped = snappedEventIDs.contains(event.id)
+                    let color = event.category.color
+
+                    // Glow halo behind the line when snapped
+                    if isSnapped {
+                        Path { path in
+                            path.move(to: CGPoint(x: x, y: 0))
+                            path.addLine(to: CGPoint(x: x, y: geo.size.height))
+                        }
+                        .stroke(color.opacity(0.25), lineWidth: 6)
+                        .blur(radius: 3)
+                    }
 
                     Path { path in
                         path.move(to: CGPoint(x: x, y: 0))
                         path.addLine(to: CGPoint(x: x, y: geo.size.height))
                     }
-                    .stroke(event.category.color.opacity(isSnapped ? 0.65 : 0.3), lineWidth: 2)
+                    .stroke(color.opacity(isSnapped ? 0.75 : 0.3), lineWidth: isSnapped ? 2.5 : 2)
                 }
             }
         }
