@@ -47,7 +47,7 @@ struct TimelineMainView: View {
     @State private var snappedEventIDs: Set<UUID> = []
     /// The event the user explicitly tapped/selected — drives auto-scroll + expand.
     @State private var selectedEventID: UUID?
-    /// Debounce timer to reduce snap change frequency
+    /// Debounce task that delays card-state promotion until scroll fully settles.
     @State private var snapDebounceTask: Task<Void, Never>?
     /// ScrollViewReader proxy stored so selectEvent can trigger programmatic scroll.
     @State private var scrollProxy: ScrollViewProxy?
@@ -110,28 +110,8 @@ struct TimelineMainView: View {
             let live = Set(newIDs)
             cardStates = cardStates.filter { live.contains($0.key) }
         }
-        // Auto-promote/demote cards when snap target changes.
-        .onChange(of: snappedRowID) { oldID, newID in
-            // Only process if the ID actually changed
-            guard oldID != newID else { return }
-            
-            // Cancel any pending snap change
-            snapDebounceTask?.cancel()
-            
-            // When user explicitly selects an event, apply immediately
-            // Otherwise debounce to reduce scroll jank
-            if selectedEventID != nil {
-                handleSnapChange(from: oldID, to: newID)
-            } else {
-                snapDebounceTask = Task {
-                    try? await Task.sleep(for: .milliseconds(100))
-                    guard !Task.isCancelled else { return }
-                    await MainActor.run {
-                        handleSnapChange(from: oldID, to: newID)
-                    }
-                }
-            }
-        }
+        // Card-state promotion now happens in onScrollPhaseChange (idle) inside
+        // timelineContent, so the state update never races the scroll physics.
         // Auto-expand card when an event is selected.
         // The scroll is handled by selectEvent(_:proxy:) directly.
         .onChange(of: selectedEventID) { _, newID in
@@ -171,7 +151,7 @@ struct TimelineMainView: View {
             let cardLeft = labelArea + CGFloat(lanes.numLanes) * laneWidth + cardGap
             let cardWidth = max(geo.size.width - cardLeft - 16, 200)
 
-            ZStack(alignment: .top) {
+            ZStack(alignment: .topLeading) {
                 ScrollViewReader { proxy in
                     ScrollView(.vertical, showsIndicators: true) {
                         LazyVStack(spacing: 0) {
@@ -208,20 +188,53 @@ struct TimelineMainView: View {
                                 }
                             }
                         }
+                        // scrollTargetLayout tells scrollPosition(id:) which views
+                        // are candidates for position tracking (read-only use here).
                         .scrollTargetLayout()
                     }
-                    .scrollTargetBehavior(.viewAligned(limitBehavior: .always))
+                    // No scrollTargetBehavior — viewAligned(.always) was the root
+                    // cause of bounce/hesitation: it fought card-height changes that
+                    // occurred while the scroll physics were still running.
+                    // Manual snap-to-nearest is applied on .idle phase instead.
                     .scrollPosition(id: $snappedRowID, anchor: .top)
-                    .contentMargins(.top, 52, for: .scrollContent)
+                    // contentMargins(.top) must equal lensY so that when a row is
+                    // snapped to the top anchor its date label lands at the lens.
+                    // lensY = topInset + rowPadding(4) + labelTopPad(8) + labelHalf(9) ≈ topInset + 21
+                    // With topInset = 59 → lensY ≈ 80. See DateLabel.visualEffect below.
+                    .contentMargins(.top, 59, for: .scrollContent)
                     .contentMargins(.bottom, 300, for: .scrollContent)
                     .scrollBounceBehavior(.basedOnSize)
                     .onAppear { scrollProxy = proxy }
+                    // Snap-on-idle: after the user's scroll physics fully settle,
+                    // lock the nearest row cleanly to the top anchor, then
+                    // promote/demote cards with a safe delay so the height change
+                    // never overlaps active scroll physics.
+                    .onScrollPhaseChange { _, newPhase in
+                        guard newPhase == .idle else { return }
+                        snapDebounceTask?.cancel()
+                        // 1. Snap-lock the resting position.
+                        if let proxy = scrollProxy {
+                            withAnimation(.spring(response: 0.25, dampingFraction: 0.9)) {
+                                proxy.scrollTo(snappedRowID, anchor: .top)
+                            }
+                        }
+                        // 2. Promote/demote cards after snap animation completes.
+                        snapDebounceTask = Task { @MainActor in
+                            try? await Task.sleep(for: .milliseconds(280))
+                            guard !Task.isCancelled else { return }
+                            handleSnapChange(to: snappedRowID)
+                        }
+                    }
                 }
 
-                // Sticky date header — consistent border, shows only the current snapped date
-                StickyDateHeader(snappedRowID: snappedRowID, timelineRows: timelineRows)
-                    .padding(.horizontal, 16)
-                    .padding(.top, 8)
+                // Sticky date pill — floats over the left label gutter, vertically
+                // centered at lensY (80pt) so it aligns with the magnified DateLabel.
+                // frame(width: labelArea) constrains it to the same 160pt column that
+                // EventDateRow uses for its DateLabel, centering the pill within it.
+                // pill height ≈ 28pt → top = lensY - halfPill = 80 - 14 = 66.
+                StickyDateHeader(label: stickyDateLabel)
+                    .frame(width: labelArea)
+                    .padding(.top, 66)
             }
         }
     }
@@ -240,7 +253,9 @@ struct TimelineMainView: View {
 
     // MARK: - Snap change handling
 
-    private func handleSnapChange(from oldID: String?, to newID: String?) {
+    /// Called once after scroll physics idle. `oldID` was removed — the
+    /// `snappedEventIDs` set already tracks what was previously promoted.
+    private func handleSnapChange(to newID: String?) {
         // Determine which events are at the new snapped date
         var newSnapped: Set<UUID> = []
         var statesToUpdate: [UUID: CardState] = [:]
@@ -314,6 +329,23 @@ struct TimelineMainView: View {
         }
     }
 
+    // MARK: - Sticky date label
+
+    /// Derives the sticky pill label directly from `snappedRowID` — no height
+    /// estimation needed. `scrollPosition(id:anchor:.top)` reliably reports the
+    /// row whose top edge is at the scroll anchor once scroll physics settle.
+    private var stickyDateLabel: String {
+        guard let rowID = snappedRowID,
+              let row = timelineRows.first(where: { $0.id == rowID })
+        else { return "" }
+        switch row {
+        case .emptyMonth(let year, let month):
+            return MonthKey(year: year, month: month).label
+        case .eventDate(_, let date):
+            return Self.stickyDateFormatter.string(from: date)
+        }
+    }
+
     // MARK: - Cached formatters
 
     static let shortDateFormatter: DateFormatter = {
@@ -321,11 +353,18 @@ struct TimelineMainView: View {
         f.dateFormat = "MMM d"
         return f
     }()
+
+    private static let stickyDateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "MMM d, yyyy"
+        return f
+    }()
 }
 
 // MARK: - DateLabel
 
-/// A static date/month label in the left gutter — no scaling, consistent size.
+/// A date/month label in the left gutter that magnifies as it approaches the
+/// sticky lens position near the top of the scroll view.
 private struct DateLabel: View {
     let text: String
     let isMonth: Bool
@@ -336,61 +375,72 @@ private struct DateLabel: View {
             .foregroundStyle(isMonth ? .tertiary : .secondary)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
+            .visualEffect { content, geometry in
+                // Lens center in scroll-view coordinate space.
+                // Derivation: contentMargins.top(59) + rowPad(4) + labelPad(8) + labelHalf(9) = 80.
+                // Must stay in sync with StickyDateHeader's .padding(.top, 66) (lensY - halfPill).
+                let lensY: CGFloat = 80
+                let frame = geometry.frame(in: .scrollView)
+                let dist = abs(frame.midY - lensY)
+                let radius: CGFloat = 80
+                let t = max(0.0, 1.0 - dist / radius)
+                let scale = 1.0 + t * 0.45
+                let brighten = Double(t) * 0.5
+                return content
+                    .scaleEffect(scale, anchor: .leading)
+                    .brightness(brighten)
+            }
+    }
+}
+
+// MARK: - PulsingHalo
+
+/// GPU-driven pulsing glow behind a snapped lane dot.
+/// Uses a single @State bool toggled on appear — the animation runs entirely on
+/// the render server, no per-frame CPU callback unlike TimelineView(.animation).
+private struct PulsingHalo: View {
+    let color: Color
+    @State private var expanded = false
+
+    var body: some View {
+        Circle()
+            .fill(color.opacity(expanded ? 0.5 : 0.15))
+            .frame(width: 18, height: 18)
+            .blur(radius: 4)
+            .onAppear {
+                withAnimation(
+                    .easeInOut(duration: 1.4).repeatForever(autoreverses: true)
+                ) { expanded = true }
+            }
+            .onDisappear { expanded = false }
     }
 }
 
 // MARK: - StickyDateHeader
 
-/// A fixed header pinned to the top of the timeline that shows only the
-/// currently-snapped date inside a consistent glass pill border.
+/// A pill pinned near the top of the timeline whose label is derived from
+/// `snappedRowID` — no height estimation or per-frame offset math needed.
+/// The parent `TimelineMainView.stickyDateLabel` does the lookup.
 private struct StickyDateHeader: View {
-    let snappedRowID: String?
-    let timelineRows: [TimelineRow]
-
-    private static let dateFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "MMM d, yyyy"
-        return f
-    }()
-
-    private static let monthFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "MMMM yyyy"
-        return f
-    }()
-
-    /// Derives a human-readable label from the snapped row ID.
-    private var label: String {
-        guard let rowID = snappedRowID else { return "" }
-        guard let row = timelineRows.first(where: { $0.id == rowID }) else { return "" }
-        switch row {
-        case .emptyMonth(let year, let month):
-            return MonthKey(year: year, month: month).label
-        case .eventDate(_, let date):
-            return Self.dateFormatter.string(from: date)
-        }
-    }
+    let label: String
 
     var body: some View {
-        let text = label
-        if !text.isEmpty {
-            Text(text)
-                .font(.system(size: 12, weight: .semibold, design: .rounded))
-                .foregroundStyle(.primary)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 6)
-                .background {
-                    Capsule(style: .continuous)
-                        .fill(.regularMaterial)
-                        .overlay {
-                            Capsule(style: .continuous)
-                                .strokeBorder(.primary.opacity(0.12), lineWidth: 1)
-                        }
-                        .shadow(color: .black.opacity(0.12), radius: 8, y: 2)
-                }
-                .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .top)))
-                .animation(.spring(response: 0.3, dampingFraction: 0.8), value: text)
-        }
+        Text(label.isEmpty ? " " : label)
+            .font(.system(size: 12, weight: .semibold, design: .rounded))
+            .foregroundStyle(label.isEmpty ? .clear : .primary)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 6)
+            .background {
+                Capsule(style: .continuous)
+                    .fill(.regularMaterial)
+                    .overlay {
+                        Capsule(style: .continuous)
+                            .strokeBorder(.primary.opacity(0.15), lineWidth: 1)
+                    }
+                    .shadow(color: .black.opacity(0.12), radius: 8, y: 2)
+            }
+            // Animate text cross-fades, not position — keeps the pill stationary.
+            .animation(.easeOut(duration: 0.15), value: label)
     }
 }
 
@@ -527,15 +577,10 @@ private struct LaneDotColumn: View {
                         let isSnapped = snappedEventIDs.contains(event.id)
                         let color = event.category.color
 
-                        // Pulsing glow halo behind the dot - simplified animation
+                        // Pulsing glow halo — GPU-driven repeatForever avoids
+                        // the per-frame CPU cost of TimelineView(.animation).
                         if isSnapped {
-                            TimelineView(.animation) { context in
-                                let pulse = cos(context.date.timeIntervalSinceReferenceDate * .pi) * 0.15 + 0.35
-                                Circle()
-                                    .fill(color.opacity(pulse))
-                                    .frame(width: 18, height: 18)
-                                    .blur(radius: 4)
-                            }
+                            PulsingHalo(color: color)
                         }
 
                         Circle()
