@@ -1,0 +1,52 @@
+import SwiftUI
+import QuickLookUI
+
+// MARK: - QuickLookPreview
+
+/// Wraps macOS QLPreviewView as a SwiftUI view.
+/// Renders an inline Quick Look preview of any file URL (PDF, image, etc.).
+struct QuickLookPreview: NSViewRepresentable {
+    let url: URL?
+
+    func makeNSView(context: Context) -> QLPreviewView {
+        let view = QLPreviewView(frame: .zero, style: .normal)!
+        view.autostarts = true
+        if let url {
+            view.previewItem = url as QLPreviewItem
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: QLPreviewView, context: Context) {
+        if let url {
+            nsView.previewItem = url as QLPreviewItem
+        } else {
+            nsView.previewItem = nil
+        }
+    }
+}
+
+// MARK: - DocumentPreviewThumbnail
+
+/// A compact square thumbnail suitable for use in list rows.
+/// Falls back to a kind icon if no URL is available.
+struct DocumentPreviewThumbnail: View {
+    let document: LSDocument
+    let size: CGFloat
+
+    var body: some View {
+        Group {
+            if let url = document.resolvedURL() {
+                QuickLookPreview(url: url)
+                    .frame(width: size, height: size)
+                    .clipShape(RoundedRectangle(cornerRadius: size * 0.15))
+            } else {
+                Image(systemName: document.kind.systemImage)
+                    .font(.system(size: size * 0.4))
+                    .foregroundStyle(.white)
+                    .frame(width: size, height: size)
+                    .background(Color.accentColor.gradient, in: RoundedRectangle(cornerRadius: size * 0.15))
+            }
+        }
+    }
+}

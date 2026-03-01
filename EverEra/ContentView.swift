@@ -2,58 +2,39 @@
 //  ContentView.swift
 //  EverEra
 //
-//  Created by Nicholas Lachapelle on 2026-02-27.
+//  Root view: NavigationSplitView with sidebar + detail area.
+//  Liquid Glass navigation elements are provided automatically by the system.
 //
 
 import SwiftUI
 import SwiftData
 
 struct ContentView: View {
-    @Environment(\.modelContext) private var modelContext
-    @Query private var items: [Item]
+    @State private var sidebarSelection: SidebarDestination? = .timeline
 
     var body: some View {
         NavigationSplitView {
-            List {
-                ForEach(items) { item in
-                    NavigationLink {
-                        Text("Item at \(item.timestamp, format: Date.FormatStyle(date: .numeric, time: .standard))")
-                    } label: {
-                        Text(item.timestamp, format: Date.FormatStyle(date: .numeric, time: .standard))
-                    }
-                }
-                .onDelete(perform: deleteItems)
-            }
-            .navigationSplitViewColumnWidth(min: 180, ideal: 200)
-            .toolbar {
-                ToolbarItem {
-                    Button(action: addItem) {
-                        Label("Add Item", systemImage: "plus")
-                    }
-                }
-            }
+            SidebarView(selection: $sidebarSelection)
         } detail: {
-            Text("Select an item")
+            detailView
         }
+        .navigationSplitViewStyle(.prominentDetail)
     }
 
-    private func addItem() {
-        withAnimation {
-            let newItem = Item(timestamp: Date())
-            modelContext.insert(newItem)
-        }
-    }
-
-    private func deleteItems(offsets: IndexSet) {
-        withAnimation {
-            for index in offsets {
-                modelContext.delete(items[index])
-            }
+    @ViewBuilder
+    private var detailView: some View {
+        switch sidebarSelection {
+        case .timeline, .none:
+            TimelineMainView()
+        case .entityHub:
+            EntityHubView()
+        case .documents:
+            DocumentCenterView()
         }
     }
 }
 
 #Preview {
     ContentView()
-        .modelContainer(for: Item.self, inMemory: true)
+        .modelContainer(for: [LSEntity.self, LSEvent.self, LSDocument.self, LSProperty.self], inMemory: true)
 }

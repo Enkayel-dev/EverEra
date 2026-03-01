@@ -1,0 +1,2415 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Personal Timeline</title>
+  <style>
+    *,
+    *::before,
+    *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0D1117;
+      color: #E6EDF3;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* ── Topbar ─────────────────────────────────────────────────────────── */
+    .topbar {
+      padding: 13px 28px;
+      border-bottom: 1px solid #21262D;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: #0D1117;
+      flex-shrink: 0;
+    }
+
+    .topbar-title {
+      font-size: 19px;
+      font-weight: 800;
+    }
+
+    .topbar-count {
+      font-size: 13px;
+      color: #8B949E;
+    }
+
+    .topbar-actions {
+      margin-left: auto;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .btn-add {
+      background: #238636;
+      color: #fff;
+      border: 1px solid rgba(240, 246, 252, .1);
+      border-radius: 7px;
+      padding: 8px 18px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background .15s;
+      font-family: inherit;
+      white-space: nowrap;
+    }
+
+    .btn-add:hover {
+      background: #2EA043;
+    }
+
+    .btn-sm {
+      background: #21262D;
+      color: #C9D1D9;
+      border: 1px solid #30363D;
+      border-radius: 7px;
+      padding: 8px 12px;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background .15s;
+      font-family: inherit;
+      white-space: nowrap;
+    }
+
+    .btn-sm:hover {
+      background: #30363D;
+    }
+
+    /* ── Layout ─────────────────────────────────────────────────────────── */
+    .tl-outer {
+      flex: 1;
+      display: flex;
+      overflow: hidden;
+    }
+
+    .tscroll {
+      flex: 1;
+      overflow-y: auto;
+      position: relative;
+    }
+
+    .sticky-date {
+      position: sticky;
+      top: 6px;
+      left: 0;
+      z-index: 20;
+      margin: 0 0 -42px 6px;
+      width: 140px;
+      height: 28px;
+      background: transparent;
+      border: 1px solid rgba(56, 139, 253, .3);
+      border-radius: 9px;
+      box-shadow: 0 0 10px 2px rgba(56, 139, 253, .06);
+      pointer-events: none;
+    }
+
+    /* lens-bottom handled via inline style in JS */
+
+    /* ── Empty ───────────────────────────────────────────────────────────── */
+    .empty {
+      text-align: center;
+      padding: 80px 20px;
+      color: #8B949E;
+    }
+
+    .empty-icon {
+      font-size: 46px;
+      margin-bottom: 14px;
+    }
+
+    .empty h3 {
+      font-size: 17px;
+      font-weight: 600;
+      color: #E6EDF3;
+      margin-bottom: 7px;
+    }
+
+    .empty p {
+      font-size: 14px;
+      line-height: 1.75;
+    }
+
+    /* ── Timeline Container ─────────────────────────────────────────────── */
+    .tl-container {
+      position: relative;
+      min-height: 100%;
+    }
+
+    .tl-spacer {
+      height: 45vh;
+    }
+
+    /* ── Month Rows ─────────────────────────────────────────────────────── */
+    .month-row {
+      position: absolute;
+      left: 0;
+      right: 0;
+      height: 1px;
+      pointer-events: none;
+    }
+
+    .month-line {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 0;
+      height: 1px;
+      background: #21262D;
+    }
+
+    .month-label {
+      position: absolute;
+      left: 10px;
+      top: 0;
+      transform: translateY(-50%);
+      font-size: 9px;
+      font-weight: 700;
+      color: #484F58;
+      letter-spacing: .05em;
+      text-transform: uppercase;
+      pointer-events: none;
+      user-select: none;
+      transition: transform .1s ease-out, filter .1s ease-out;
+      will-change: transform, filter;
+      padding: 0 6px;
+    }
+
+    .month-row.jan .month-line {
+      background: #30363D;
+      height: 3px;
+      top: -1px;
+    }
+
+    /* ── Date Rows ─────────────────────────────────────────────────────── */
+    .date-row {
+      position: absolute;
+      left: 0;
+      right: 0;
+      height: 0;
+      pointer-events: none;
+      z-index: 2;
+    }
+
+    .date-line {
+      position: absolute;
+      left: 152px;
+      right: 0;
+      top: 0;
+      height: 1px;
+      background: rgba(56, 139, 253, .15);
+    }
+
+    .date-label {
+      position: absolute;
+      left: 6px;
+      top: 0;
+      transform: translateY(-50%);
+      pointer-events: none;
+      user-select: none;
+      width: 140px;
+      height: 28px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #0D1117;
+      border: 1px solid rgba(56, 139, 253, .12);
+      border-radius: 9px;
+    }
+
+    .date-label-text {
+      font-size: 8px;
+      font-weight: 600;
+      color: #388BFD;
+      opacity: .6;
+      letter-spacing: .03em;
+      white-space: nowrap;
+      transition: transform .1s ease-out, filter .1s ease-out;
+      will-change: transform, filter;
+    }
+
+    /* ── Lane Lines ─────────────────────────────────────────────────────── */
+    .lane-zone {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      z-index: 1;
+    }
+
+    .lane-line {
+      position: absolute;
+      width: 2px;
+      border-radius: 1px;
+      opacity: .55;
+      z-index: 1;
+    }
+
+    .lane-dot {
+      position: absolute;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      z-index: 3;
+      transform: translate(-50%, -50%);
+      cursor: ns-resize;
+      transition: transform .2s ease, box-shadow .2s ease;
+    }
+
+    .lane-dot::after {
+      content: '';
+      position: absolute;
+      top: -8px;
+      left: -8px;
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+    }
+
+    .lane-dot.start {
+      width: 12px;
+      height: 12px;
+      border: 2.5px solid;
+      background: transparent;
+    }
+
+    .lane-dot.end {}
+
+    .lane-dot.end.ongoing {
+      cursor: default;
+    }
+
+    .lane-dot.dragging {
+      filter: brightness(1.5);
+      box-shadow: 0 0 8px 2px currentColor;
+      transform: translate(-50%, -50%) scale(1.4);
+      z-index: 10;
+    }
+
+    .lane-dot.snap-active {
+      transform: translate(-50%, -50%) scale(2);
+      z-index: 5;
+      box-shadow: 0 0 8px 2px currentColor;
+    }
+
+    .drag-preview-line {
+      position: absolute;
+      left: 0;
+      right: 0;
+      height: 0;
+      border-top: 2px dashed #58A6FF;
+      opacity: .5;
+      pointer-events: none;
+      z-index: 8;
+    }
+
+    .drag-date-tooltip {
+      position: absolute;
+      z-index: 11;
+      background: #161B22;
+      border: 1px solid #388BFD;
+      border-radius: 5px;
+      padding: 3px 8px;
+      font-size: 11px;
+      font-weight: 600;
+      color: #58A6FF;
+      white-space: nowrap;
+      pointer-events: none;
+      transform: translateX(12px);
+    }
+
+    /* ── Event Cards ────────────────────────────────────────────────────── */
+    .ev-card {
+      position: absolute;
+      z-index: 2;
+      background: #161B22;
+      border: 1px solid #21262D;
+      border-radius: 7px;
+      padding: 8px 11px;
+      cursor: pointer;
+      transition: all .2s ease;
+      border-left-width: 3px;
+      border-left-style: solid;
+      min-width: 0;
+      overflow: hidden;
+    }
+
+    .ev-card:hover {
+      box-shadow: 0 0 0 3px rgba(56, 139, 253, .07);
+    }
+
+    .ev-card.end-card {
+      opacity: .7;
+    }
+
+    .ev-card.end-card:hover {
+      opacity: .9;
+    }
+
+    .ev-card-row {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+    }
+
+    .ev-card-title {
+      font-size: 12px;
+      font-weight: 600;
+      line-height: 1.3;
+      flex: 1;
+      word-wrap: break-word;
+      overflow-wrap: anywhere;
+    }
+
+    .ev-card-badge {
+      font-size: 9px;
+      font-weight: 700;
+      padding: 1px 6px;
+      border-radius: 99px;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    .ev-card-date {
+      font-size: 10px;
+      font-weight: 600;
+      margin-top: 2px;
+      opacity: .7;
+    }
+
+    .ev-card-type {
+      font-size: 9px;
+      font-weight: 700;
+      opacity: .5;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+    }
+
+    .ev-card-files {
+      font-size: 10px;
+      color: #8B949E;
+      margin-top: 3px;
+    }
+
+    .ev-card.focused {
+      z-index: 5;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, .35);
+      border-color: rgba(56, 139, 253, .3);
+      opacity: 1 !important;
+    }
+
+    .ev-card-summary {
+      display: none;
+      margin-top: 6px;
+      font-size: 11px;
+      color: #8B949E;
+      line-height: 1.5;
+    }
+
+    .ev-card.focused .ev-card-summary {
+      display: block;
+    }
+
+    .ev-card.expanded {
+      z-index: 50 !important;
+      max-height: 70vh;
+      overflow-y: auto;
+      cursor: default;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, .5);
+      max-width: 480px;
+      transform: none !important;
+      width: auto !important;
+      right: 16px !important;
+      opacity: 1 !important;
+    }
+
+    .ev-card-detail {
+      margin-top: 10px;
+    }
+
+    .ev-card-attachments {
+      margin: 8px 0;
+    }
+
+    .ev-card-attachments img {
+      max-width: 100%;
+      border-radius: 6px;
+      border: 1px solid #30363D;
+      margin-top: 6px;
+      display: block;
+    }
+
+    /* ── Modal ───────────────────────────────────────────────────────────── */
+    .overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, .75);
+      z-index: 999;
+      align-items: flex-start;
+      justify-content: center;
+      backdrop-filter: blur(3px);
+      padding: 32px 16px;
+      overflow-y: auto;
+    }
+
+    .overlay.open {
+      display: flex;
+    }
+
+    .modal {
+      background: #161B22;
+      border: 1px solid #30363D;
+      border-radius: 13px;
+      padding: 26px 26px 22px;
+      width: 560px;
+      max-width: 100%;
+      box-shadow: 0 24px 80px rgba(0, 0, 0, .75);
+      flex-shrink: 0;
+      margin: auto;
+    }
+
+    .mhead {
+      display: flex;
+      align-items: center;
+      margin-bottom: 20px;
+    }
+
+    .mhead h2 {
+      font-size: 17px;
+      font-weight: 700;
+      flex: 1;
+    }
+
+    .btn-x {
+      background: none;
+      border: none;
+      color: #8B949E;
+      font-size: 17px;
+      cursor: pointer;
+      padding: 3px 7px;
+      border-radius: 5px;
+      line-height: 1;
+      font-family: inherit;
+    }
+
+    .btn-x:hover {
+      background: #21262D;
+      color: #E6EDF3;
+    }
+
+    .fg {
+      margin-bottom: 14px;
+    }
+
+    .fg label {
+      display: block;
+      font-size: 11px;
+      font-weight: 700;
+      color: #8B949E;
+      text-transform: uppercase;
+      letter-spacing: .07em;
+      margin-bottom: 5px;
+    }
+
+    .fg input,
+    .fg select,
+    .fg textarea {
+      width: 100%;
+      background: #0D1117;
+      border: 1px solid #30363D;
+      border-radius: 7px;
+      color: #E6EDF3;
+      font-size: 14px;
+      padding: 9px 12px;
+      outline: none;
+      font-family: inherit;
+      transition: border-color .15s;
+      -webkit-appearance: none;
+    }
+
+    .fg input:focus,
+    .fg select:focus,
+    .fg textarea:focus {
+      border-color: #388BFD;
+    }
+
+    .fg textarea {
+      resize: vertical;
+      min-height: 68px;
+    }
+
+    .fg input[type=date]::-webkit-calendar-picker-indicator {
+      filter: invert(.6);
+      cursor: pointer;
+    }
+
+    .frow {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    .fhint {
+      font-size: 11px;
+      color: #6E7681;
+      margin-top: 4px;
+    }
+
+    .sec-div {
+      height: 1px;
+      background: #21262D;
+      margin: 18px 0 16px;
+    }
+
+    .sec-lbl {
+      font-size: 11px;
+      font-weight: 700;
+      color: #58A6FF;
+      text-transform: uppercase;
+      letter-spacing: .1em;
+      margin-bottom: 14px;
+    }
+
+    /* Files in modal */
+    .files-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin-bottom: 10px;
+    }
+
+    .file-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: #0D1117;
+      border: 1px solid #21262D;
+      border-radius: 7px;
+      padding: 7px 11px;
+    }
+
+    .file-row-name {
+      flex: 1;
+      font-size: 13px;
+      color: #C9D1D9;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      min-width: 0;
+    }
+
+    .file-row-size {
+      font-size: 11px;
+      color: #6E7681;
+      flex-shrink: 0;
+    }
+
+    .file-row-tag {
+      font-size: 11px;
+      color: #22C55E;
+      flex-shrink: 0;
+      font-weight: 600;
+    }
+
+    .file-row-btns {
+      display: flex;
+      gap: 4px;
+      flex-shrink: 0;
+    }
+
+    .btn-icon {
+      background: none;
+      border: none;
+      cursor: pointer;
+      color: #8B949E;
+      font-size: 14px;
+      padding: 3px 5px;
+      border-radius: 4px;
+      font-family: inherit;
+      line-height: 1;
+    }
+
+    .btn-icon:hover {
+      background: #21262D;
+      color: #E6EDF3;
+    }
+
+    .btn-icon.danger:hover {
+      background: rgba(218, 54, 51, .12);
+      color: #DA3633;
+    }
+
+    .btn-upload-lbl {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: #21262D;
+      border: 1px solid #30363D;
+      border-radius: 7px;
+      padding: 8px 14px;
+      font-size: 13px;
+      font-weight: 500;
+      color: #C9D1D9;
+      cursor: pointer;
+      transition: background .15s;
+    }
+
+    .btn-upload-lbl:hover {
+      background: #30363D;
+    }
+
+    /* Modal footer */
+    .mfoot {
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+      margin-top: 20px;
+      padding-top: 16px;
+      border-top: 1px solid #21262D;
+    }
+
+    .btn-cancel {
+      background: #21262D;
+      border: 1px solid #30363D;
+      color: #E6EDF3;
+      border-radius: 7px;
+      padding: 8px 18px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      font-family: inherit;
+    }
+
+    .btn-cancel:hover {
+      background: #30363D;
+    }
+
+    .btn-save {
+      background: #238636;
+      border: 1px solid rgba(240, 246, 252, .1);
+      color: #fff;
+      border-radius: 7px;
+      padding: 8px 18px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      font-family: inherit;
+    }
+
+    .btn-save:hover {
+      background: #2EA043;
+    }
+
+    .btn-del {
+      background: none;
+      border: 1px solid #DA3633;
+      color: #DA3633;
+      border-radius: 7px;
+      padding: 8px 14px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      font-family: inherit;
+      margin-right: auto;
+    }
+
+    .btn-del:hover {
+      background: rgba(218, 54, 51, .1);
+    }
+
+    select option {
+      background: #161B22;
+      color: #E6EDF3;
+    }
+
+    ::-webkit-scrollbar {
+      width: 5px;
+      height: 5px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: #21262D;
+      border-radius: 3px;
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+      background: #30363D;
+    }
+  </style>
+</head>
+
+<body>
+
+  <!-- ── Topbar ───────────────────────────────────────────────────────────── -->
+  <div class="topbar">
+    <span class="topbar-title">Personal Timeline</span>
+    <span class="topbar-count" id="tbarCount"></span>
+    <div class="topbar-actions">
+      <button class="btn-sm" onclick="exportData()">Export JSON</button>
+      <label class="btn-sm" for="importInput" style="cursor:pointer;">Import JSON</label>
+      <input type="file" id="importInput" accept=".json" style="display:none" onchange="importData(event)">
+      <button class="btn-add" onclick="openAdd()">+ Add Event</button>
+    </div>
+  </div>
+
+  <!-- ── Timeline Area ───────────────────────────────────────────────────── -->
+  <div class="tl-outer">
+    <div class="tscroll" id="tscroll"></div>
+  </div>
+
+  <!-- ── Modal ─────────────────────────────────────────────────────────────── -->
+  <div class="overlay" id="overlay">
+    <div class="modal">
+      <div class="mhead">
+        <h2 id="mTitle">Add Event</h2>
+        <button class="btn-x" onclick="closeModal()">&#10005;</button>
+      </div>
+      <div class="fg">
+        <label>Title / Label *</label>
+        <input type="text" id="fTitle" placeholder="e.g. Rented apartment on Rue St-Denis, Bought Ford F-150...">
+      </div>
+      <div class="fg">
+        <label>Category *</label>
+        <select id="fCat" onchange="onCatChange()">
+          <option value="">Select a category...</option>
+        </select>
+      </div>
+      <div class="frow">
+        <div class="fg">
+          <label>Start Date *</label>
+          <input type="date" id="fStart">
+        </div>
+        <div class="fg">
+          <label>End Date</label>
+          <input type="date" id="fEnd">
+          <div class="fhint">Leave blank if still ongoing</div>
+        </div>
+      </div>
+      <div id="dynamicFields"></div>
+      <div class="sec-div"></div>
+      <div class="sec-lbl">Documents &amp; Attachments</div>
+      <div class="files-list" id="filesList"></div>
+      <label class="btn-upload-lbl" for="fileInput">&#128206; Attach Files</label>
+      <input type="file" id="fileInput" multiple style="display:none" onchange="onFilesSelected(event)">
+      <div class="mfoot" id="mFoot"></div>
+    </div>
+  </div>
+
+  <script>
+    /* ═══════════════════════════════════════════════════════════════════════════
+     * Personal Timeline — Single-file application
+     *
+     * Architecture: see ARCHITECTURE.md for full design reference.
+     *
+     * Sections in this script (in order):
+     *   1. Category Schema        — field definitions per event type
+     *   2. IndexedDB              — persistence layer (events + files)
+     *   3. State                  — all mutable application state
+     *   4. Constants & Utils      — date helpers, formatting, escaping
+     *   5. Card Height Estimation — estimated card heights for layout spacing
+     *   6. Layout Engine          — computes Y positions for all elements
+     *   7. Render                 — builds DOM from layout, manages scroll target
+     *   8. Scroll & Snap          — wheel snapping, smooth scroll, focus tracking
+     *   9. Lens Magnification     — scale/brighten labels near the sticky lens
+     *  10. Drag-to-Resize         — drag lane dots to change event dates
+     *  11. Card Click Flow        — small → medium → full state transitions
+     *  12. Inline Card Expand     — expanded card form, collapse, click-outside
+     *  13. Modal & Forms          — add/edit modal, dynamic fields, category forms
+     *  14. Save / Delete          — event persistence and file management
+     *  15. File Handling          — attachment upload, preview, download
+     *  16. Export / Import        — JSON backup and restore
+     *  17. Event Listeners & Init — boot sequence and global event listeners
+     * ═══════════════════════════════════════════════════════════════════════════ */
+
+
+    /* ── 1. Category Schema ─────────────────────────────────────────────────── */
+    // Each category defines a color, summary fields (shown on focused cards),
+    // and form fields (shown in the expanded edit form / modal).
+    const SCHEMA = {
+      'Housing / Where I Lived': {
+        color: '#4A90D9',
+        summaryFields: ['address', 'city', 'rentMortgage'],
+        fields: [
+          { key: 'address', label: 'Street Address', type: 'text', ph: '123 Rue Principale, App. 4' },
+          { key: 'city', label: 'City', type: 'text', ph: 'Montr\u00e9al' },
+          { key: 'province', label: 'Province / State', type: 'text', ph: 'QC' },
+          { key: 'postalCode', label: 'Postal Code', type: 'text', ph: 'H2X 1Y4' },
+          { key: 'rentMortgage', label: 'Monthly Rent / Mortgage', type: 'text', ph: '$1,200/mo' },
+          { key: 'landlord', label: 'Landlord / Property Co.', type: 'text', ph: '' },
+          { key: 'releve31', label: 'Relev\u00e9 31 Ref # (QC)', type: 'text', ph: 'Quebec housing tax form reference number' },
+          { key: 'notes', label: 'Notes', type: 'textarea', ph: '' },
+        ],
+      },
+      'Employment': {
+        color: '#22C55E',
+        summaryFields: ['employer', 'jobTitle', 'salary'],
+        fields: [
+          { key: 'employer', label: 'Employer', type: 'text', ph: '' },
+          { key: 'jobTitle', label: 'Job Title / Role', type: 'text', ph: '' },
+          { key: 'salary', label: 'Salary / Wage', type: 'text', ph: '$25/hr or $55,000/yr' },
+          { key: 'empType', label: 'Employment Type', type: 'select', options: ['Full-time', 'Part-time', 'Contract', 'Self-employed', 'Seasonal', 'Casual'] },
+          { key: 'roeNumber', label: 'ROE Number', type: 'text', ph: 'Record of Employment number' },
+          { key: 't4Box14', label: 'T4 Box 14 (Emp. Income)', type: 'text', ph: 'Total employment income on T4' },
+          { key: 'notes', label: 'Notes', type: 'textarea', ph: '' },
+        ],
+      },
+      'Education': {
+        color: '#F59E0B',
+        summaryFields: ['institution', 'program', 'credential'],
+        fields: [
+          { key: 'institution', label: 'Institution', type: 'text', ph: '' },
+          { key: 'program', label: 'Program / Degree', type: 'text', ph: "DEP Electrician, DEC, Bachelor's..." },
+          { key: 'studentId', label: 'Student ID', type: 'text', ph: '' },
+          { key: 'credential', label: 'Credential Earned', type: 'text', ph: 'Diploma, Certificate, Degree...' },
+          { key: 'notes', label: 'Notes', type: 'textarea', ph: '' },
+        ],
+      },
+      'Vehicles': {
+        color: '#A855F7',
+        summaryFields: ['makeModel', 'purchasePrice', 'loanPayoffDate'],
+        fields: [
+          { key: 'makeModel', label: 'Make & Model', type: 'text', ph: 'Ford F-150 XLT' },
+          { key: 'vehicleYear', label: 'Vehicle Year', type: 'text', ph: '2020' },
+          { key: 'vin', label: 'VIN', type: 'text', ph: '' },
+          { key: 'licensePlate', label: 'License Plate', type: 'text', ph: '' },
+          { key: 'purchasePrice', label: 'Purchase Price', type: 'text', ph: '$42,000' },
+          { key: 'dealerSeller', label: 'Dealer / Seller', type: 'text', ph: '' },
+          { key: 'loanPayoffDate', label: 'Loan Payoff Date', type: 'date', ph: '' },
+          { key: 'odometer', label: 'Odometer at Purchase', type: 'text', ph: '45,000 km' },
+          { key: 'notes', label: 'Notes', type: 'textarea', ph: '' },
+        ],
+      },
+      "Driver's License / SAAQ": {
+        color: '#EF4444',
+        summaryFields: ['status', 'licenseClass', 'suspReason'],
+        fields: [
+          { key: 'licenseClass', label: 'License Class', type: 'text', ph: '5, 4A, 3, 2, 1...' },
+          { key: 'licenseNumber', label: 'License Number', type: 'text', ph: '' },
+          { key: 'status', label: 'Status', type: 'select', options: ['Active / Normal', 'Suspended', 'Reinstated', 'Class Upgraded', 'Class Obtained', 'Expired'] },
+          { key: 'suspReason', label: 'Reason (if suspended)', type: 'text', ph: 'e.g. DUI, too many demerit points...' },
+          { key: 'demeritPoints', label: 'Demerit Points', type: 'text', ph: '' },
+          { key: 'notes', label: 'Notes', type: 'textarea', ph: '' },
+        ],
+      },
+      'Insurance': {
+        color: '#F97316',
+        summaryFields: ['provider', 'insType', 'premium'],
+        fields: [
+          { key: 'provider', label: 'Insurance Provider', type: 'text', ph: '' },
+          { key: 'policyNumber', label: 'Policy Number', type: 'text', ph: '' },
+          { key: 'insType', label: 'Insurance Type', type: 'select', options: ['Auto', 'Home', 'Tenant / Renter', 'Life', 'Health / Dental', 'Disability', 'Travel', 'Business', 'Other'] },
+          { key: 'premium', label: 'Premium', type: 'text', ph: '$120/mo' },
+          { key: 'coverage', label: 'Coverage Amount', type: 'text', ph: '' },
+          { key: 'deductible', label: 'Deductible', type: 'text', ph: '' },
+          { key: 'notes', label: 'Notes', type: 'textarea', ph: '' },
+        ],
+      },
+      'Tax Filing': {
+        color: '#06B6D4',
+        summaryFields: ['taxYear', 'province', 'federalRefund'],
+        fields: [
+          { key: 'taxYear', label: 'Tax Year', type: 'text', ph: '2023' },
+          { key: 'province', label: 'Province Filed', type: 'text', ph: 'QC' },
+          { key: 'federalRefund', label: 'Federal Refund / Owing', type: 'text', ph: '+$1,200 refund  or  -$400 owing' },
+          { key: 'provRefund', label: 'Provincial Refund / Owing', type: 'text', ph: '' },
+          { key: 'preparer', label: 'Prepared By', type: 'text', ph: 'Self, H&R Block, accountant...' },
+          { key: 'notes', label: 'Notes', type: 'textarea', ph: '' },
+        ],
+      },
+      'Major Purchase': {
+        color: '#10B981',
+        summaryFields: ['item', 'amount', 'vendor'],
+        fields: [
+          { key: 'item', label: 'Item / Description', type: 'text', ph: '' },
+          { key: 'amount', label: 'Amount', type: 'text', ph: '$5,000' },
+          { key: 'vendor', label: 'Vendor / Store', type: 'text', ph: '' },
+          { key: 'warranty', label: 'Warranty Period', type: 'text', ph: '2 years, expires...' },
+          { key: 'serialNumber', label: 'Serial / Model #', type: 'text', ph: '' },
+          { key: 'notes', label: 'Notes', type: 'textarea', ph: '' },
+        ],
+      },
+      'Life Event': {
+        color: '#EC4899',
+        summaryFields: ['notes'],
+        fields: [
+          { key: 'notes', label: 'Notes', type: 'textarea', ph: '' },
+        ],
+      },
+    };
+
+    /* ── 2. IndexedDB ─────────────────────────────────────────────────────── */
+    // Two object stores: 'events' (keyPath: id) and 'files' (keyPath: id, index: eventId).
+    // Files store binary data as ArrayBuffer alongside metadata.
+    const DB = (() => {
+      const NAME = 'PersonalTimelineDB', VER = 1;
+      let _db = null;
+
+      function open() {
+        return new Promise((res, rej) => {
+          const req = indexedDB.open(NAME, VER);
+          req.onupgradeneeded = e => {
+            const db = e.target.result;
+            if (!db.objectStoreNames.contains('events'))
+              db.createObjectStore('events', { keyPath: 'id' });
+            if (!db.objectStoreNames.contains('files')) {
+              const fs = db.createObjectStore('files', { keyPath: 'id' });
+              fs.createIndex('eventId', 'eventId', { unique: false });
+            }
+          };
+          req.onsuccess = e => { _db = e.target.result; res(); };
+          req.onerror = e => rej(e.target.error);
+        });
+      }
+
+      function _tx(store, mode) { return _db.transaction(store, mode || 'readonly').objectStore(store); }
+
+      function all(store) {
+        return new Promise((res, rej) => {
+          const req = _tx(store).getAll();
+          req.onsuccess = () => res(req.result);
+          req.onerror = () => rej(req.error);
+        });
+      }
+
+      function get(store, id) {
+        return new Promise((res, rej) => {
+          const req = _tx(store).get(id);
+          req.onsuccess = () => res(req.result);
+          req.onerror = () => rej(req.error);
+        });
+      }
+
+      function put(store, obj) {
+        return new Promise((res, rej) => {
+          const req = _tx(store, 'readwrite').put(obj);
+          req.onsuccess = () => res();
+          req.onerror = () => rej(req.error);
+        });
+      }
+
+      function del(store, id) {
+        return new Promise((res, rej) => {
+          const req = _tx(store, 'readwrite').delete(id);
+          req.onsuccess = () => res();
+          req.onerror = () => rej(req.error);
+        });
+      }
+
+      function byIndex(store, idx, val) {
+        return new Promise((res, rej) => {
+          const req = _tx(store).index(idx).getAll(val);
+          req.onsuccess = () => res(req.result);
+          req.onerror = () => rej(req.error);
+        });
+      }
+
+      return { open, all, get, put, del, byIndex };
+    })();
+
+    /* ── 3. State ──────────────────────────────────────────────────────────── */
+    // See ARCHITECTURE.md §11 for full state variable reference.
+
+    // Data
+    let allEvents = [];           // in-memory cache of all events from IndexedDB
+
+    // Edit state (shared between modal and inline card edit)
+    let editId = null;            // ID of event being edited, or null
+    let _editCardType = null;     // 'start'|'end' — which card is expanded (inline only)
+    let _formPrefix = '';         // '' for modal form IDs, 'ec-' for inline card form IDs
+    let pendingFiles = [];        // files selected but not yet persisted
+    let existingFiles = [];       // files already saved for the event being edited
+    let deletedFileIds = [];      // file IDs marked for deletion on next save
+
+    // Layout & scroll
+    let _focusedIds = new Set();  // event IDs focused at the currently snapped date
+    let _layoutCache = null;      // last layoutTimeline() result + snapPoints + topPad
+    let _isRendering = false;     // guard: prevents re-render during render cycle
+    let _inlineBlobUrls = [];     // blob URLs to revoke when collapsing expanded card
+
+    // Drag-to-resize
+    let _dragState = null;        // active drag state object, or null
+
+    /* ── 4. Constants & Utils ──────────────────────────────────────────────── */
+
+    const TODAY = new Date(); TODAY.setHours(0, 0, 0, 0);
+    const CUR_YEAR = TODAY.getFullYear();
+    const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const MONTH_FULL = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+    function uid() { return `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`; }
+    function esc(s) { const d = document.createElement('div'); d.textContent = String(s || ''); return d.innerHTML; }        // HTML-escape text content
+    function eA(s) { return String(s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;'); }                                 // Escape for HTML attributes
+    function parseD(s) { if (!s) return null; const d = new Date(s + 'T12:00:00'); return isNaN(d) ? null : d; }              // "YYYY-MM-DD" → Date (noon to avoid TZ issues)
+    function yearOf(s) { const d = parseD(s); return d ? d.getFullYear() : null; }
+    function fmt(s) { const d = parseD(s); if (!d) return '\u2014'; return d.toLocaleDateString('en-CA', { month: 'short', day: 'numeric', year: 'numeric' }); }
+    function fmtSz(n) { if (n < 1024) return n + ' B'; if (n < 1048576) return (n / 1024).toFixed(1) + ' KB'; return (n / 1048576).toFixed(1) + ' MB'; }
+    function color(c) { return (SCHEMA[c] || {}).color || '#58A6FF'; }                                                       // Category color with fallback
+
+    // Convert "YYYY-MM-DD" → integer month key (year*12 + month). Used for grouping and lane overlap.
+    function monthKey(s) {
+      const d = parseD(s);
+      if (!d) return null;
+      return d.getFullYear() * 12 + d.getMonth();
+    }
+
+    function buildSummaryHTML(ev, todayStr) {
+      const parts = [];
+      const startD = parseD(ev.startDate);
+      const startFmt = startD ? MONTH_NAMES[startD.getMonth()] + ' ' + startD.getDate() + ', ' + startD.getFullYear() : '';
+      let endFmt = 'Present';
+      if (ev.endDate) {
+        const endD = parseD(ev.endDate);
+        endFmt = endD ? MONTH_NAMES[endD.getMonth()] + ' ' + endD.getDate() + ', ' + endD.getFullYear() : '';
+      }
+      if (startFmt) parts.push(esc(startFmt) + ' &rarr; ' + esc(endFmt));
+      const schema = SCHEMA[ev.category];
+      if (schema && schema.summaryFields && ev.customFields) {
+        const fieldParts = [];
+        schema.summaryFields.forEach(key => {
+          const val = (ev.customFields[key] || '').trim();
+          if (!val) return;
+          const fieldDef = (schema.fields || []).find(f => f.key === key);
+          const label = fieldDef ? fieldDef.label : key;
+          fieldParts.push(esc(label) + ': ' + esc(val));
+        });
+        if (fieldParts.length) parts.push(fieldParts.join(' &middot; '));
+      }
+      if (!parts.length) return '';
+      return '<div class="ev-card-summary">' + parts.join('<br>') + '</div>';
+    }
+
+    /* ── 5. Card Height Estimation ─────────────────────────────────────────── */
+    // Returns estimated pixel height for a card. Used by the layout engine to
+    // allocate vertical space above/below date lines. Does NOT need to be exact —
+    // it just needs to be >= the actual rendered height to prevent overlap.
+    function getCardHeight(ev, cardType, isFocused, isExpanded) {
+      if (isExpanded) return Math.round(window.innerHeight * 0.65);
+      let h = 42;
+      if (ev.category) h += 16;
+      if (ev.fileCount > 0) h += 16;
+      const titleLen = (ev.title || '').length;
+      const lines = Math.ceil(titleLen / 25);
+      if (lines > 1) h += (lines - 1) * 14;
+      if (isFocused) h += 60;
+      return h;
+    }
+
+    /* ── 6. Layout Engine ─────────────────────────────────────────────────── */
+    // Computes Y positions for all months, dates, events, and lanes.
+    // See ARCHITECTURE.md §4 for the full algorithm description.
+    function layoutTimeline(events, options = {}) {
+      const focusedIds = options.focusedIds || new Set();
+      const expandedId = options.expandedId || null;
+      const expandedCardType = options.expandedCardType || null;
+      if (!events.length) return null;
+      const sorted = [...events].sort((a, b) => (a.startDate || '').localeCompare(b.startDate || ''));
+      const todayStr = TODAY.getFullYear() + '-' + String(TODAY.getMonth() + 1).padStart(2, '0') + '-' + String(TODAY.getDate()).padStart(2, '0');
+      const todayKey = CUR_YEAR * 12 + TODAY.getMonth();
+      let minMK = todayKey, maxMK = todayKey;
+      sorted.forEach(ev => {
+        const sk = monthKey(ev.startDate);
+        if (sk !== null) { minMK = Math.min(minMK, sk); maxMK = Math.max(maxMK, sk); }
+        const ek = ev.endDate ? monthKey(ev.endDate) : todayKey;
+        if (ek !== null) { minMK = Math.min(minMK, ek); maxMK = Math.max(maxMK, ek); }
+      });
+      minMK -= 1; maxMK += 1;
+      const monthDates = new Map();
+      for (let mk = minMK; mk <= maxMK; mk++) monthDates.set(mk, new Set());
+      sorted.forEach(ev => {
+        const sk = monthKey(ev.startDate);
+        if (sk !== null) monthDates.get(sk).add(ev.startDate);
+        const ek = ev.endDate ? monthKey(ev.endDate) : todayKey;
+        if (ek !== null && monthDates.has(ek)) monthDates.get(ek).add(ev.endDate || todayStr);
+      });
+      const BUFFER = 8;
+      const EMPTY_MONTH_H = 18;
+      const monthMeta = new Map();
+      const dateMeta = new Map();
+      let curY = 0;
+      for (let mk = maxMK; mk >= minMK; mk--) {
+        const year = Math.floor(mk / 12);
+        const month = ((mk % 12) + 12) % 12;
+        const dates = Array.from(monthDates.get(mk)).sort((a, b) => b.localeCompare(a));
+        const monthYStart = curY;
+        if (dates.length > 0) curY += 6; else curY += EMPTY_MONTH_H;
+        dates.forEach(ds => {
+          const relevantEvents = events.filter(ev => ev.startDate === ds || (ev.endDate || todayStr) === ds);
+          let maxAbove = 0, maxBelow = 0;
+          relevantEvents.forEach(ev => {
+            const isFocused = focusedIds.has(ev.id);
+            const startExpanded = ev.id === expandedId && expandedCardType === 'start';
+            const endExpanded = ev.id === expandedId && expandedCardType === 'end';
+            if (ev.startDate === ds) {
+              // Expanded start cards use transform:none so they extend downward (below the date line)
+              if (startExpanded) {
+                maxBelow = Math.max(maxBelow, getCardHeight(ev, 'start', isFocused, true));
+              } else {
+                maxAbove = Math.max(maxAbove, getCardHeight(ev, 'start', isFocused, false));
+              }
+            }
+            if ((ev.endDate || todayStr) === ds) maxBelow = Math.max(maxBelow, getCardHeight(ev, 'end', isFocused, endExpanded));
+          });
+          const dateLineY = curY + maxAbove;
+          dateMeta.set(ds, { y: dateLineY, heightAbove: maxAbove, heightBelow: maxBelow });
+          curY = dateLineY + maxBelow + BUFFER;
+        });
+        if (dates.length > 0 && (curY - monthYStart) < EMPTY_MONTH_H) curY = monthYStart + EMPTY_MONTH_H;
+        monthMeta.set(mk, { y: monthYStart, height: curY - monthYStart, year, month, mk, isActive: monthDates.get(mk).size > 0 });
+      }
+      const months = Array.from(monthMeta.values()).sort((a, b) => b.mk - a.mk);
+      function yForMK(mk) { const m = monthMeta.get(mk); return m ? m.y : 0; }
+      function yForDate(dateStr) { const d = dateMeta.get(dateStr); return d ? d.y : yForMK(monthKey(dateStr)); }
+      const eventsWithKeys = sorted.map(ev => {
+        const sk = monthKey(ev.startDate) || minMK;
+        const ek = ev.endDate ? (monthKey(ev.endDate) || maxMK) : todayKey;
+        return { ev, sk, ek };
+      }).sort((a, b) => a.sk - b.sk || (b.ek - b.sk) - (a.ek - a.sk));
+      const lanes = [];
+      const layoutEvents = [];
+      eventsWithKeys.forEach(({ ev, sk, ek }) => {
+        let assigned = -1;
+        for (let i = 0; i < lanes.length; i++) {
+          const overlaps = lanes[i].some(r => sk <= r.ek && ek >= r.sk);
+          if (!overlaps) { assigned = i; break; }
+        }
+        if (assigned === -1) { assigned = lanes.length; lanes.push([]); }
+        lanes[assigned].push({ sk, ek });
+        const startY = yForDate(ev.startDate);
+        const endY = ev.endDate ? yForDate(ev.endDate) : yForDate(todayStr);
+        layoutEvents.push({ ev, lane: assigned, startY, endY, ongoing: !ev.endDate });
+      });
+      const dateSnaps = [];
+      dateMeta.forEach((meta, ds) => {
+        const evs = events.filter(ev => ev.startDate === ds || (ev.endDate || todayStr) === ds);
+        dateSnaps.push({ dateStr: ds, y: meta.y, isToday: ds === todayStr, eventIds: evs.map(e => e.id) });
+      });
+      dateSnaps.sort((a, b) => a.y - b.y);
+      return { months, layoutEvents, totalHeight: curY, numLanes: lanes.length || 1, dateSnaps, todayY: yForDate(todayStr), todayStr };
+    }
+
+    /* ── 7. Render ──────────────────────────────────────────────────────────── */
+    // Builds the entire timeline DOM from scratch. Called on:
+    //   - Initial load, window resize, event save/delete
+    //   - Focus change (small→medium), expand/collapse (medium↔full)
+    // Preserves scroll position via _snapKey (dateStr identity).
+    function renderTimeline() {
+      const scroll = document.getElementById('tscroll');
+      if (!scroll) return;
+
+      document.getElementById('tbarCount').textContent =
+        allEvents.length ? `\u00b7 ${allEvents.length} event${allEvents.length !== 1 ? 's' : ''}` : '';
+
+      if (!allEvents.length) {
+        scroll.innerHTML = `<div class="empty">
+      <div class="empty-icon">\ud83d\udcc5</div>
+      <h3>Your timeline is empty</h3>
+      <p>Click <strong>+ Add Event</strong> to start building your personal record.<br>
+      All data is saved locally in your browser \u2014 nothing leaves your computer.</p>
+    </div>`;
+        _layoutCache = null;
+        return;
+      }
+
+      const layout = layoutTimeline(allEvents, {
+        focusedIds: _focusedIds,
+        expandedId: editId,
+        expandedCardType: _editCardType
+      });
+      if (!layout) return;
+      _layoutCache = layout;
+      _isRendering = true;
+
+      const { months, layoutEvents, totalHeight, numLanes, dateSnaps, todayY, todayStr } = layout;
+
+      // Sticky lens — positioned just far enough down for a focused start card
+      // (which extends upward from the date line) to be fully visible above it.
+      const lensTop = 100;
+
+      const LABEL_AREA = 152; // just past the 140px sticky date + margin
+      const LANE_W = 16;
+      const LANE_ZONE_W = LABEL_AREA + numLanes * LANE_W + 12;
+      const CARD_LEFT = LANE_ZONE_W + 20;
+      const TOP_PAD = lensTop + 14; // enough top padding so the first content can scroll up to the lens
+      const BOT_PAD = window.innerHeight;
+      const SPACER = TOP_PAD; // offset applied to all element positions
+      _layoutCache.topPad = TOP_PAD;
+
+      scroll.innerHTML = '';
+
+      const stickyDate = document.createElement('div');
+      stickyDate.className = 'sticky-date';
+      stickyDate.id = 'stickyDate';
+      stickyDate.style.top = lensTop + 'px';
+      scroll.appendChild(stickyDate);
+
+      // Container
+      const container = document.createElement('div');
+      container.className = 'tl-container';
+      container.style.height = (totalHeight + TOP_PAD + BOT_PAD) + 'px';
+
+      // Month rows
+      months.forEach(m => {
+        const row = document.createElement('div');
+        row.className = 'month-row' + (m.month === 0 ? ' jan' : '');
+        row.style.top = (m.y + SPACER) + 'px';
+        row.dataset.mk = m.mk;
+        row.dataset.month = m.month;
+        row.dataset.year = m.year;
+
+        const line = document.createElement('div');
+        line.className = 'month-line';
+        row.appendChild(line);
+
+        // Show label centered within the month's allocated height
+        const label = document.createElement('div');
+        label.className = 'month-label';
+        label.style.top = Math.round(m.height / 2) + 'px';
+        label.textContent = MONTH_NAMES[m.month] + ' ' + m.year;
+        row.appendChild(label);
+
+        container.appendChild(row);
+      });
+
+      // Date rows (snap lines for exact event dates)
+      dateSnaps.forEach(ds => {
+        const row = document.createElement('div');
+        row.className = 'date-row';
+        row.style.top = (ds.y + SPACER) + 'px';
+
+        const line = document.createElement('div');
+        line.className = 'date-line';
+        row.appendChild(line);
+
+        const label = document.createElement('div');
+        label.className = 'date-label';
+        const span = document.createElement('span');
+        span.className = 'date-label-text';
+        const d = parseD(ds.dateStr);
+        if (ds.isToday) {
+          span.textContent = 'Today \u00b7 ' + (d ? MONTH_NAMES[d.getMonth()] + ' ' + d.getDate() + ', ' + d.getFullYear() : ds.dateStr);
+        } else {
+          span.textContent = d ? MONTH_NAMES[d.getMonth()] + ' ' + d.getDate() + ', ' + d.getFullYear() : ds.dateStr;
+        }
+        label.appendChild(span);
+        row.appendChild(label);
+
+        container.appendChild(row);
+      });
+
+      // Build combined snap points (month centers + all event dates), sorted by Y
+      const snapPoints = [];
+      months.forEach(m => {
+        // snaps to the label center (vertically centered in the month's height)
+        snapPoints.push({ y: m.y + Math.round(m.height / 2), label: 'month' });
+      });
+      dateSnaps.forEach(ds => snapPoints.push({ y: ds.y, label: 'date', isToday: ds.isToday, dateStr: ds.dateStr, eventIds: ds.eventIds }));
+      snapPoints.sort((a, b) => a.y - b.y);
+      // Deduplicate within 4px (keep first entry when two are close)
+      for (let i = snapPoints.length - 1; i > 0; i--) {
+        if (Math.abs(snapPoints[i].y - snapPoints[i - 1].y) < 4) snapPoints.splice(i, 1);
+      }
+      _layoutCache.snapPoints = snapPoints;
+
+      // Lane zone background line (subtle center guide)
+      const laneZone = document.createElement('div');
+      laneZone.className = 'lane-zone';
+      laneZone.style.left = '0';
+      laneZone.style.width = LANE_ZONE_W + 'px';
+      container.appendChild(laneZone);
+      const pendingCards = []; // collector for side-by-side card layout logic
+
+      function createCardElement(ev, type, lane, startY, endY, isFocused, isExpanded, c) {
+        const card = document.createElement('div');
+        const isEnd = type === 'end';
+        card.className = 'ev-card' + (isEnd ? ' end-card' : '') + (isFocused ? ' focused' : '') + (isExpanded ? ' expanded' : '');
+        card.style.borderLeftColor = c;
+        card.style.top = (isEnd ? endY : startY) + SPACER + 'px';
+        if (!isEnd) card.style.transform = 'translateY(-100%)';
+        card.dataset.eventId = ev.id;
+        card.dataset.date = isEnd ? (ev.endDate || todayStr) : ev.startDate;
+        card.dataset.cardType = type;
+
+        const summaryHTML = buildSummaryHTML(ev, todayStr);
+        let content = `
+          <div class="ev-card-row">
+            <div class="ev-card-title">${esc(ev.title || 'Untitled')}</div>
+            ${ev.category ? `<div class="ev-card-badge" style="background:${c}22;color:${c};">${esc(ev.category)}</div>` : ''}
+          </div>
+          <div class="ev-card-row">
+            <div class="ev-card-date" style="color:${isEnd ? 'inherit' : c};">${!isEnd ? fmt(ev.startDate) : (ev.endDate ? fmt(ev.endDate) : 'Present')}</div>
+            <div class="ev-card-type" ${ev.endDate || !isEnd ? '' : `style="color:${c};"`}>${!isEnd ? 'Started' : (ev.endDate ? 'Ended' : 'Ongoing')}</div>
+          </div>
+          ${ev.fileCount > 0 ? `<div class="ev-card-files">\u{1F4CE} ${ev.fileCount} file${ev.fileCount !== 1 ? 's' : ''}</div>` : ''}
+          ${summaryHTML}
+        `;
+
+        if (isExpanded) {
+          const cat = ev.category || '';
+          const catOptions = Object.keys(SCHEMA).map(catName =>
+            `<option value="${eA(catName)}"${catName === cat ? ' selected' : ''}>${esc(catName)}</option>`
+          ).join('');
+
+          content += `
+            <div class="ev-card-detail">
+              <div class="sec-div"></div>
+              <div class="fg">
+                <label>Title / Label *</label>
+                <input type="text" id="ec-fTitle" value="${eA(ev.title || '')}">
+              </div>
+              <div class="fg">
+                <label>Category *</label>
+                <select id="ec-fCat" onchange="onCatChange()">
+                  <option value="">Select a category...</option>
+                  ${catOptions}
+                </select>
+              </div>
+              <div class="frow">
+                <div class="fg">
+                  <label>Start Date *</label>
+                  <input type="date" id="ec-fStart" value="${eA(ev.startDate || '')}">
+                </div>
+                <div class="fg">
+                  <label>End Date</label>
+                  <input type="date" id="ec-fEnd" value="${eA(ev.endDate || '')}">
+                  <div class="fhint">Leave blank if still ongoing</div>
+                </div>
+              </div>
+              <div id="ec-dynamicFields"></div>
+              <div class="sec-div"></div>
+              <div class="sec-lbl">Documents &amp; Attachments</div>
+              <div class="files-list" id="ec-filesList"></div>
+              <div class="ev-card-attachments" id="ec-preview"></div>
+              <label class="btn-upload-lbl" for="ec-fileInput">&#128206; Attach Files</label>
+              <input type="file" id="ec-fileInput" multiple style="display:none" onchange="onFilesSelected(event)">
+              <div class="mfoot">
+                <button class="btn-del" onclick="deleteEvent('${ev.id}')">Delete</button>
+                <button class="btn-cancel" onclick="collapseExpandedCard()">Cancel</button>
+                <button class="btn-save" onclick="saveEvent()">Save Changes</button>
+              </div>
+            </div>
+          `;
+
+          // Post-render setup for expanded card
+          setTimeout(() => {
+            renderDynamicFields(cat, ev.customFields || {});
+            renderFilesList();
+            const t = document.getElementById('ec-fTitle');
+            if (t) t.focus();
+            document.addEventListener('click', _onClickOutsideCard, true);
+          }, 0);
+
+          card.addEventListener('wheel', (e) => {
+            const atTop = card.scrollTop <= 0;
+            const atBot = card.scrollTop + card.clientHeight >= card.scrollHeight - 1;
+            if ((e.deltaY < 0 && atTop) || (e.deltaY > 0 && atBot)) e.preventDefault();
+            e.stopPropagation();
+          }, { passive: false });
+        } else {
+          card.addEventListener('click', () => onCardClick(card, ev.id));
+        }
+
+        card.innerHTML = content;
+        return card;
+      }
+
+      layoutEvents.forEach(({ ev, lane, startY, endY, ongoing }) => {
+        const c = color(ev.category);
+        const laneX = LABEL_AREA + lane * LANE_W + 8;
+        const isFocused = _focusedIds.has(ev.id);
+
+        // Vertical line
+        const lineTop = Math.min(startY, endY);
+        const lineBot = Math.max(startY, endY);
+        const vline = document.createElement('div');
+        vline.className = 'lane-line';
+        vline.style.left = (laneX - 1) + 'px';
+        vline.style.top = (lineTop + SPACER) + 'px';
+        vline.style.height = Math.max(4, lineBot - lineTop) + 'px';
+        vline.style.backgroundColor = c;
+        container.appendChild(vline);
+
+        // Dots
+        const dotS = document.createElement('div');
+        dotS.className = 'lane-dot start' + (isFocused ? ' snap-active' : '');
+        dotS.style.left = laneX + 'px';
+        dotS.style.top = (startY + SPACER) + 'px';
+        dotS.style.borderColor = c;
+        dotS.style.background = c + '22';
+        dotS.dataset.eventId = ev.id;
+        dotS.dataset.date = ev.startDate;
+        dotS.addEventListener('pointerdown', e => initDrag(e, ev.id, 'startDate', dotS));
+        container.appendChild(dotS);
+
+        const endDateStr = ongoing ? todayStr : ev.endDate;
+        const dotE = document.createElement('div');
+        dotE.className = 'lane-dot end' + (ongoing ? ' ongoing' : '') + (isFocused ? ' snap-active' : '');
+        dotE.style.left = laneX + 'px';
+        dotE.style.top = (endY + SPACER) + 'px';
+        dotE.dataset.eventId = ev.id;
+        dotE.dataset.date = endDateStr;
+        dotE.style.backgroundColor = c;
+        if (!ongoing) {
+          dotE.addEventListener('pointerdown', e => initDrag(e, ev.id, 'endDate', dotE));
+        }
+        container.appendChild(dotE);
+
+        // Cards — only expand the specific card type that was clicked
+        const sExpanded = ev.id === editId && _editCardType === 'start';
+        const eExpanded = ev.id === editId && _editCardType === 'end';
+
+        const sCard = createCardElement(ev, 'start', lane, startY, endY, isFocused, sExpanded, c);
+        pendingCards.push({ el: sCard, yKey: Math.round(startY), isExpanded: sExpanded });
+
+        const eCard = createCardElement(ev, 'end', lane, startY, endY, isFocused, eExpanded, c);
+        pendingCards.push({ el: eCard, yKey: Math.round(endY), isExpanded: eExpanded });
+      });
+
+      // Group cards by Y position and assign side-by-side layout
+      const cardsByY = new Map();
+      pendingCards.forEach(c => {
+        if (!cardsByY.has(c.yKey)) cardsByY.set(c.yKey, []);
+        cardsByY.get(c.yKey).push(c.el);
+      });
+      const GAP = 6;
+      cardsByY.forEach(cards => {
+        const n = cards.length;
+        const totalGap = (n - 1) * GAP;
+        cards.forEach((el, i) => {
+          if (n === 1) {
+            el.style.left = CARD_LEFT + 'px';
+            el.style.right = '16px';
+          } else {
+            // Split available width evenly with gaps
+            const pct = 100 / n;
+            const leftPct = i * pct;
+            const rightPct = (n - 1 - i) * pct;
+            el.style.left = `calc(${CARD_LEFT}px + ${leftPct}% * (100% - ${CARD_LEFT}px - 16px) / 100%)`;
+            el.style.right = '16px';
+            // Use left+width instead for cleaner calc
+            el.style.left = CARD_LEFT + 'px';
+            el.style.right = 'auto';
+            const availW = `(100% - ${CARD_LEFT}px - 16px)`;
+            const cardW = `(${availW} - ${totalGap}px) / ${n}`;
+            el.style.width = `calc(${cardW})`;
+            // Ensure minimum width of 240px if space allows, otherwise fill
+            el.style.minWidth = '240px';
+            el.style.left = `calc(${CARD_LEFT}px + ${i} * (${cardW} + ${GAP}px))`;
+          }
+          container.appendChild(el);
+        });
+      });
+
+      scroll.appendChild(container);
+
+      const isInitial = !_layoutCache.snapPoints; // simplified check
+      setupScrollSpy(true);
+
+      let targetIdx = 0;
+      const snaps = _layoutCache.snapPoints;
+      if (_snapKey) {
+        // Find the snap matching the saved identity (dateStr) from before re-layout
+        const keyIdx = snaps.findIndex(sp => sp.dateStr === _snapKey);
+        if (keyIdx >= 0) targetIdx = keyIdx;
+        else if (typeof _snapIdx === 'number' && snaps[_snapIdx]) targetIdx = _snapIdx;
+      } else if (_snapIdx === null) {
+        // Initial load: find Today
+        const todayIdx = snaps.findIndex(sp => sp.isToday);
+        if (todayIdx >= 0) targetIdx = todayIdx;
+      } else if (typeof _snapIdx === 'number' && snaps[_snapIdx]) {
+        targetIdx = _snapIdx;
+      }
+
+      scrollToSnapIdx(targetIdx);
+      _isRendering = false;
+      onTimelineScroll();
+    }
+
+    /* ── 8. Scroll & Snap ─────────────────────────────────────────────────── */
+    // Wheel events are intercepted: each tick moves exactly one snap point.
+    // Smooth scrolling is locked to prevent mid-animation focus changes.
+    // See ARCHITECTURE.md §6 for the full scroll system design.
+
+    let _snapIdx = null;          // current snap point index (null = initial load)
+    let _snapKey = null;          // dateStr of current snap — survives re-layout
+    let _wheelLock = false;       // true during smooth scroll animations
+    let _rafId = null;            // requestAnimationFrame ID for scroll throttle
+    let _scrollendTimer = null;   // fallback timeout to release _wheelLock
+    let _lensOffset = 20;         // px from container origin to lens center (recalculated)
+
+    function setupScrollSpy(skipSync) {
+      const scroll = document.getElementById('tscroll');
+      const lens = document.getElementById('stickyDate');
+      const container = scroll.querySelector('.tl-container');
+
+      if (lens && container) {
+        const containerOffset = container.offsetTop;
+        // Use the sticky top (6px) + half height as the actual lens center position
+        // rather than offsetTop which reflects the pre-sticky flow position
+        const stickyTop = parseFloat(getComputedStyle(lens).top) || 6;
+        const lensCenter = stickyTop + lens.offsetHeight / 2;
+        _lensOffset = lensCenter - containerOffset;
+      }
+
+      scroll.removeEventListener('scroll', onTimelineScroll);
+      scroll.removeEventListener('wheel', onWheel);
+      scroll.removeEventListener('scrollend', onScrollEnd);
+
+      scroll.addEventListener('scroll', onTimelineScroll, { passive: true });
+      scroll.addEventListener('wheel', onWheel, { passive: false });
+      scroll.addEventListener('scrollend', onScrollEnd);
+
+      if (skipSync) return;
+
+      if (_layoutCache && _layoutCache.snapPoints && _layoutCache.snapPoints.length) {
+        const topPad = _layoutCache.topPad || 0;
+        const currentY = scroll.scrollTop + _lensOffset - topPad;
+        let closestIdx = 0;
+        let closestDist = Infinity;
+        _layoutCache.snapPoints.forEach((sp, idx) => {
+          const dist = Math.abs(sp.y - currentY);
+          if (dist < closestDist) {
+            closestDist = dist;
+            closestIdx = idx;
+          }
+        });
+        _snapIdx = closestIdx;
+      }
+    }
+
+    function scrollToSnapIdx(idx) {
+      const scroll = document.getElementById('tscroll');
+      if (!_layoutCache || !_layoutCache.snapPoints || !_layoutCache.snapPoints.length) return;
+      const snaps = _layoutCache.snapPoints;
+      idx = Math.max(0, Math.min(snaps.length - 1, idx));
+      _snapIdx = idx;
+      _snapKey = snaps[idx].dateStr || null; // preserve identity for re-layout
+      // Lock to prevent updateStickyDate from changing focus mid-animation
+      _wheelLock = true;
+      if (_scrollendTimer) clearTimeout(_scrollendTimer);
+      _scrollendTimer = setTimeout(() => { _wheelLock = false; }, 400);
+      // Recalculate lens offset in case lens position changed (start vs end card)
+      const lens = document.getElementById('stickyDate');
+      const container = scroll.querySelector('.tl-container');
+      if (lens && container) {
+        const stickyTop = parseFloat(lens.style.top) || parseFloat(getComputedStyle(lens).top) || 6;
+        _lensOffset = stickyTop + lens.offsetHeight / 2 - container.offsetTop;
+      }
+      const topPad = _layoutCache.topPad || 0;
+      scroll.scrollTo({ top: snaps[idx].y + topPad - _lensOffset, behavior: 'smooth' });
+      updateSnapFocus(idx);
+    }
+
+    function updateSnapFocus(snapIdx) {
+      if (!_layoutCache || !_layoutCache.snapPoints) return;
+      const snaps = _layoutCache.snapPoints;
+      const sp = snaps[snapIdx];
+
+      const container = document.querySelector('.tl-container');
+      if (!container) return;
+
+      const prevFocused = _focusedIds;
+      _focusedIds = new Set();
+
+      if (sp && sp.label === 'date' && sp.eventIds && sp.eventIds.length) {
+        _focusedIds = new Set(sp.eventIds);
+      }
+
+      // Reset lens to default position when landing on a month snap
+      const lens = document.getElementById('stickyDate');
+      if (lens && (!sp || sp.label !== 'date')) {
+        lens.style.top = '100px';
+      }
+
+      if (_isRendering) return;
+
+      // Check if the focused set actually changed
+      const changed = _focusedIds.size !== prevFocused.size ||
+        [..._focusedIds].some(id => !prevFocused.has(id));
+      if (changed) {
+        renderTimeline();
+        return;
+      }
+
+      // If no reflow needed, just update classes
+      container.querySelectorAll('.lane-dot.snap-active').forEach(d => d.classList.remove('snap-active'));
+      container.querySelectorAll('.ev-card.focused').forEach(c => {
+        if (!c.classList.contains('expanded')) c.classList.remove('focused');
+      });
+
+      if (!_focusedIds.size) return;
+
+      const dateStr = sp.dateStr;
+      const idSet = _focusedIds;
+
+      container.querySelectorAll('.lane-dot').forEach(dot => {
+        if (dot.dataset.date === dateStr && idSet.has(dot.dataset.eventId)) {
+          dot.classList.add('snap-active');
+        }
+      });
+
+      container.querySelectorAll('.ev-card').forEach(card => {
+        if (card.classList.contains('expanded')) return;
+        if (card.dataset.date === dateStr && idSet.has(card.dataset.eventId)) {
+          card.classList.add('focused');
+        }
+      });
+    }
+
+    function onScrollEnd() {
+      _wheelLock = false;
+      if (_scrollendTimer) { clearTimeout(_scrollendTimer); _scrollendTimer = null; }
+    }
+
+    function onWheel(e) {
+      if (!_layoutCache) return;
+
+      // Allow expanded cards to scroll internally
+      if (e.target.closest('.ev-card.expanded')) return;
+
+      e.preventDefault();
+
+      if (Math.abs(e.deltaY) < 1) return;
+      if (_wheelLock) return;
+
+      const snaps = _layoutCache.snapPoints;
+      if (!snaps || !snaps.length) return;
+      const dir = e.deltaY > 0 ? 1 : -1;
+      const nextIdx = Math.max(0, Math.min(snaps.length - 1, _snapIdx + dir));
+
+      if (nextIdx === _snapIdx) return;
+
+      _wheelLock = true;
+      // Fallback unlock for browsers without scrollend support
+      if (_scrollendTimer) clearTimeout(_scrollendTimer);
+      _scrollendTimer = setTimeout(() => { _wheelLock = false; }, 400);
+
+      scrollToSnapIdx(nextIdx);
+    }
+
+    function onTimelineScroll() {
+      if (_rafId) return;
+      _rafId = requestAnimationFrame(() => {
+        _rafId = null;
+        updateStickyDate();
+      });
+    }
+
+    /* ── 9. Lens Magnification ─────────────────────────────────────────────── */
+    // Runs every scroll frame. Scales and brightens labels near the sticky lens.
+    // Also updates snap focus during passive (non-programmatic) scrolling.
+    function updateStickyDate() {
+      const scroll = document.getElementById('tscroll');
+      const el = document.getElementById('stickyDate');
+      if (!_layoutCache || !el) return;
+
+      const stickyRect = el.getBoundingClientRect();
+      const lensTop = stickyRect.top;
+      const lensBot = stickyRect.bottom;
+      const lensCenter = lensTop + stickyRect.height / 2;
+      const lensRadius = stickyRect.height; // effect extends one lens-height above/below
+
+      const monthRows = scroll.querySelectorAll('.month-row');
+      monthRows.forEach(row => {
+        const label = row.querySelector('.month-label');
+        if (!label) return;
+
+        const labelRect = label.getBoundingClientRect();
+        const labelCenter = labelRect.top + labelRect.height / 2;
+        const dist = Math.abs(labelCenter - lensCenter);
+
+        if (dist < lensRadius) {
+          const t = 1 - dist / lensRadius;
+          const scale = 1 + t * 0.6;
+          const brightness = 1 + t * 1.0;
+          label.style.transform = `translateY(-50%) scale(${scale})`;
+          label.style.transformOrigin = 'left center';
+          label.style.filter = `brightness(${brightness})`;
+        } else {
+          label.style.transform = 'translateY(-50%)';
+          label.style.filter = '';
+        }
+      });
+
+      // Magnify date label text with same lens effect (scale text only, not the background container)
+      const dateRows = scroll.querySelectorAll('.date-row');
+      dateRows.forEach(row => {
+        const label = row.querySelector('.date-label');
+        const textSpan = row.querySelector('.date-label-text');
+        if (!label || !textSpan) return;
+
+        const labelRect = label.getBoundingClientRect();
+        const labelCenter = labelRect.top + labelRect.height / 2;
+        const dist = Math.abs(labelCenter - lensCenter);
+
+        if (dist < lensRadius) {
+          const t = 1 - dist / lensRadius;
+          const scale = 1 + t * 0.6;
+          const brightness = 1 + t * 1.0;
+          textSpan.style.transform = `scale(${scale})`;
+          textSpan.style.transformOrigin = 'center center';
+          textSpan.style.filter = `brightness(${brightness})`;
+        } else {
+          textSpan.style.transform = '';
+          textSpan.style.filter = '';
+        }
+      });
+
+      // Update snap focus based on nearest snap point during passive scroll.
+      // Skip during programmatic smooth scrolls (_wheelLock) to prevent
+      // mid-animation focus changes that cause re-layout bouncing.
+      if (!_wheelLock && _layoutCache.snapPoints && _layoutCache.snapPoints.length) {
+        const topPad = _layoutCache.topPad || 0;
+        const currentY = scroll.scrollTop + _lensOffset - topPad;
+        let closestIdx = 0;
+        let closestDist = Infinity;
+        _layoutCache.snapPoints.forEach((sp, idx) => {
+          const dist = Math.abs(sp.y - currentY);
+          if (dist < closestDist) {
+            closestDist = dist;
+            closestIdx = idx;
+          }
+        });
+        if (closestIdx !== _snapIdx) {
+          _snapIdx = closestIdx;
+          _snapKey = _layoutCache.snapPoints[closestIdx].dateStr || null;
+          updateSnapFocus(_snapIdx);
+        }
+      }
+    }
+
+    /* ── 10. Drag-to-Resize ──────────────────────────────────────────────── */
+    // Lane dots can be dragged vertically to change event start/end dates.
+    // Shows a dashed preview line and date tooltip during drag.
+    function yToDate(y) {
+      if (!_layoutCache) return null;
+      const months = _layoutCache.months;
+      // months[] is descending mk (newest first). Find the two month rows bracketing y.
+      for (let i = 0; i < months.length - 1; i++) {
+        const cur = months[i];
+        const nxt = months[i + 1];
+        if (y >= cur.y && y < nxt.y) {
+          // Interpolate within this month row
+          const frac = (y - cur.y) / cur.height;
+          // cur.mk is the month key; since reversed, cur is more recent than nxt
+          const daysInMonth = new Date(cur.year, cur.month + 1, 0).getDate();
+          // frac=0 means start of this row (beginning of this month), frac=1 means end
+          // Since time is reversed (recent=top), top of row = 1st of month, bottom = end of month
+          const day = Math.max(1, Math.min(daysInMonth, Math.round(1 + frac * (daysInMonth - 1))));
+          const mm = String(cur.month + 1).padStart(2, '0');
+          const dd = String(day).padStart(2, '0');
+          return `${cur.year}-${mm}-${dd}`;
+        }
+      }
+      // Clamp to first or last month
+      if (y <= months[0].y) {
+        const m = months[0];
+        return `${m.year}-${String(m.month + 1).padStart(2, '0')}-01`;
+      }
+      const last = months[months.length - 1];
+      const dLast = new Date(last.year, last.month + 1, 0).getDate();
+      return `${last.year}-${String(last.month + 1).padStart(2, '0')}-${String(dLast).padStart(2, '0')}`;
+    }
+
+    function initDrag(e, eventId, field, dotEl) {
+      e.preventDefault();
+      e.stopPropagation();
+
+      const container = dotEl.closest('.tl-container');
+      const SPACER = 20; // must match TOP_PAD in renderTimeline
+      const origY = parseFloat(dotEl.style.top) - SPACER;
+      const ev = allEvents.find(ev => ev.id === eventId);
+      if (!ev) return;
+
+      _dragState = {
+        eventId, field, dotEl,
+        startMouseY: e.clientY,
+        origY,
+        origDate: field === 'startDate' ? ev.startDate : ev.endDate,
+        laneX: parseFloat(dotEl.style.left),
+        spacer: SPACER,
+        container,
+        didMove: false,
+      };
+
+      dotEl.classList.add('dragging');
+      dotEl.setPointerCapture(e.pointerId);
+
+      // Create preview line
+      const preview = document.createElement('div');
+      preview.className = 'drag-preview-line';
+      preview.style.top = dotEl.style.top;
+      preview.id = '_drag_preview';
+      container.appendChild(preview);
+
+      // Create date tooltip
+      const tooltip = document.createElement('div');
+      tooltip.className = 'drag-date-tooltip';
+      tooltip.style.top = dotEl.style.top;
+      tooltip.style.left = (_dragState.laneX + 10) + 'px';
+      tooltip.textContent = _dragState.origDate;
+      tooltip.id = '_drag_tooltip';
+      container.appendChild(tooltip);
+
+      document.addEventListener('pointermove', onDragMove);
+      document.addEventListener('pointerup', onDragEnd);
+    }
+
+    function onDragMove(e) {
+      if (!_dragState) return;
+      _dragState.didMove = true;
+
+      const { startMouseY, origY, spacer, container, dotEl } = _dragState;
+      const deltaY = e.clientY - startMouseY;
+      let newY = origY + deltaY;
+
+      // Clamp to container bounds (minus spacer)
+      const maxY = parseFloat(container.style.height) - spacer * 2;
+      newY = Math.max(0, Math.min(maxY, newY));
+
+      // Update dot position
+      dotEl.style.top = (newY + spacer) + 'px';
+
+      // Update preview line
+      const preview = document.getElementById('_drag_preview');
+      if (preview) preview.style.top = (newY + spacer) + 'px';
+
+      // Convert Y to date and update tooltip
+      const dateStr = yToDate(newY);
+      const tooltip = document.getElementById('_drag_tooltip');
+      if (tooltip) {
+        tooltip.style.top = (newY + spacer - 14) + 'px';
+        tooltip.textContent = dateStr || '';
+      }
+    }
+
+    async function onDragEnd(e) {
+      document.removeEventListener('pointermove', onDragMove);
+      document.removeEventListener('pointerup', onDragEnd);
+
+      if (!_dragState) return;
+      const { eventId, field, dotEl, origY, spacer, container, didMove, origDate } = _dragState;
+
+      // Clean up preview elements
+      dotEl.classList.remove('dragging');
+      const preview = document.getElementById('_drag_preview');
+      if (preview) preview.remove();
+      const tooltip = document.getElementById('_drag_tooltip');
+      if (tooltip) tooltip.remove();
+
+      if (!didMove) { _dragState = null; return; }
+
+      // Calculate final Y and date
+      const finalY = parseFloat(dotEl.style.top) - spacer;
+      const newDate = yToDate(finalY);
+
+      if (!newDate) { _dragState = null; renderTimeline(); return; }
+
+      // Find the event
+      const ev = allEvents.find(ev => ev.id === eventId);
+      if (!ev) { _dragState = null; renderTimeline(); return; }
+
+      // Validate: start can't be after end, end can't be before start
+      if (field === 'startDate') {
+        if (ev.endDate && newDate > ev.endDate) {
+          // Invalid — snap back
+          _dragState = null;
+          renderTimeline();
+          return;
+        }
+        ev.startDate = newDate;
+      } else {
+        if (newDate < ev.startDate) {
+          // Invalid — snap back
+          _dragState = null;
+          renderTimeline();
+          return;
+        }
+        ev.endDate = newDate;
+      }
+
+      ev.updated = new Date().toISOString();
+      await DB.put('events', ev);
+
+      _dragState = null;
+      renderTimeline();
+    }
+
+    /* ── 11. Card Click Flow ──────────────────────────────────────────────── */
+    /*  Handles the three-state card transition: small → medium → full.
+     *  - Small card click: snaps to the card's date (triggers updateSnapFocus
+     *    which applies focused class → medium state).
+     *  - Medium (focused) card click: expands to full inline edit form.
+     *  - Adjusts lens position: 100px for start cards, 40px for end cards
+     *    so the relevant card is visible relative to the lens.
+     *  See ARCHITECTURE.md §5 for card state details.                       */
+    function onCardClick(cardEl, eventId) {
+      if (cardEl.classList.contains('expanded')) return; // already full form
+
+      if (cardEl.classList.contains('focused')) {
+        // Medium → Full: expand
+        toggleCardExpand(cardEl, eventId);
+        return;
+      }
+
+      // Small → Medium: snap to this card's date, which triggers updateSnapFocus
+      const dateStr = cardEl.dataset.date;
+      const cardType = cardEl.dataset.cardType; // 'start' or 'end'
+      if (!_layoutCache || !_layoutCache.snapPoints) return;
+
+      // Find the snap point matching this date
+      const snaps = _layoutCache.snapPoints;
+      const snapIdx = snaps.findIndex(sp => sp.label === 'date' && sp.dateStr === dateStr);
+      if (snapIdx < 0) return;
+
+      // Handle lens positioning for end cards — move lens higher so end card is visible below
+      const lens = document.getElementById('stickyDate');
+      if (lens) {
+        if (cardType === 'end') {
+          lens.style.top = '40px';
+        } else {
+          lens.style.top = '100px';
+        }
+      }
+
+      scrollToSnapIdx(snapIdx);
+    }
+
+    /* ── 12. Inline Card Expand / Collapse ──────────────────────────────────── */
+    /*  Manages the expanded (full) card state with inline edit form.
+     *  - toggleCardExpand: sets editId + _editCardType, triggers re-render
+     *    which builds the detail form inside the matching card.
+     *  - collapseCard: clears edit state, revokes blob URLs, re-renders.
+     *  - _onClickOutsideCard: click-outside listener to auto-collapse.
+     *  - ecFileClick: toggles image preview inside the expanded card.
+     *  Only ONE card can be expanded at a time.
+     *  See ARCHITECTURE.md §5.3 for expanded card behavior.                */
+    async function toggleCardExpand(cardEl, eventId) {
+      if (cardEl.classList.contains('expanded')) {
+        collapseCard(cardEl);
+        return;
+      }
+
+      // Collapse any other expanded card
+      const prev = document.querySelector('.ev-card.expanded');
+      if (prev) collapseCard(prev);
+
+      const ev = allEvents.find(e => e.id === eventId);
+      if (!ev) return;
+
+      // Setup editing state for renderTimeline to pick up
+      _formPrefix = 'ec-';
+      editId = eventId;
+      _editCardType = cardEl.dataset.cardType || 'start'; // track which card to expand
+      pendingFiles = [];
+      deletedFileIds = [];
+      existingFiles = await DB.byIndex('files', 'eventId', eventId);
+
+      renderTimeline();
+    }
+
+    function collapseCard(cardEl) {
+      // Revoke blob URLs
+      _inlineBlobUrls.forEach(u => URL.revokeObjectURL(u));
+      _inlineBlobUrls = [];
+
+      // Clean up state
+      _formPrefix = '';
+      editId = null;
+      _editCardType = null;
+      pendingFiles = [];
+      existingFiles = [];
+      deletedFileIds = [];
+
+      document.removeEventListener('click', _onClickOutsideCard, true);
+      renderTimeline();
+    }
+
+    function collapseExpandedCard() {
+      const el = document.querySelector('.ev-card.expanded');
+      if (el) collapseCard(el);
+    }
+
+    function _onClickOutsideCard(e) {
+      const expanded = document.querySelector('.ev-card.expanded');
+      if (!expanded) return;
+      if (expanded.contains(e.target)) return;
+      // Don't collapse if clicking a confirm dialog or file picker
+      if (e.target.closest('.overlay')) return;
+      collapseCard(expanded);
+    }
+
+    async function ecFileClick(fileId) {
+      const preview = document.getElementById('ec-preview');
+      if (!preview) return;
+
+      // Toggle off if same image
+      if (preview.dataset.activeFile === fileId) {
+        preview.innerHTML = '';
+        preview.dataset.activeFile = '';
+        return;
+      }
+
+      const file = await DB.get('files', fileId);
+      if (!file) return;
+
+      if (!(file.type || '').startsWith('image/')) {
+        downloadFile(fileId);
+        return;
+      }
+
+      const blob = new Blob([file.data], { type: file.type });
+      const url = URL.createObjectURL(blob);
+      _inlineBlobUrls.push(url);
+      preview.innerHTML = `<img src="${url}" alt="${esc(file.name)}">`;
+      preview.dataset.activeFile = fileId;
+    }
+
+    /* ── 13. Modal & Forms ──────────────────────────────────────────────────── */
+    /*  The overlay modal used for Add/Edit when not using inline card edit.
+     *  - openAdd: resets form, generates new ID, shows modal.
+     *  - openEdit: populates form from existing event, shows modal.
+     *  - closeModal: hides overlay, clears edit state.
+     *  - renderDynamicFields: builds category-specific form fields from SCHEMA.
+     *  - collectCustomFields: reads custom field values from the DOM.
+     *  _formPrefix controls field ID prefixes: '' for modal, 'ec-' for inline.
+     *  See ARCHITECTURE.md §9.1 for save flow details.                     */
+    function openAdd() {
+      collapseExpandedCard();
+      _formPrefix = '';
+      editId = uid();
+      pendingFiles = [];
+      existingFiles = [];
+      deletedFileIds = [];
+      document.getElementById('mTitle').textContent = 'Add Event';
+      document.getElementById('fTitle').value = '';
+      document.getElementById('fCat').value = '';
+      document.getElementById('fStart').value = '';
+      document.getElementById('fEnd').value = '';
+      document.getElementById('dynamicFields').innerHTML = '';
+      document.getElementById('mFoot').innerHTML = `
+    <button class="btn-cancel" onclick="closeModal()">Cancel</button>
+    <button class="btn-save"   onclick="saveEvent()">Save Event</button>
+  `;
+      renderFilesList();
+      document.getElementById('overlay').classList.add('open');
+      setTimeout(() => document.getElementById('fTitle').focus(), 60);
+    }
+
+    async function openEdit(id) {
+      const ev = allEvents.find(e => e.id === id);
+      if (!ev) return;
+      collapseExpandedCard();
+      _formPrefix = '';
+      editId = id;
+      pendingFiles = [];
+      deletedFileIds = [];
+      existingFiles = await DB.byIndex('files', 'eventId', id);
+      document.getElementById('mTitle').textContent = 'Edit Event';
+      document.getElementById('fTitle').value = ev.title || '';
+      document.getElementById('fCat').value = ev.category || '';
+      document.getElementById('fStart').value = ev.startDate || '';
+      document.getElementById('fEnd').value = ev.endDate || '';
+      renderDynamicFields(ev.category, ev.customFields || {});
+      document.getElementById('mFoot').innerHTML = `
+    <button class="btn-del"    onclick="deleteEvent('${id}')">Delete</button>
+    <button class="btn-cancel" onclick="closeModal()">Cancel</button>
+    <button class="btn-save"   onclick="saveEvent()">Save Changes</button>
+  `;
+      renderFilesList();
+      document.getElementById('overlay').classList.add('open');
+      setTimeout(() => document.getElementById('fTitle').focus(), 60);
+    }
+
+    function closeModal() {
+      document.getElementById('overlay').classList.remove('open');
+      editId = null;
+      pendingFiles = [];
+      existingFiles = [];
+      deletedFileIds = [];
+    }
+
+    function onCatChange() {
+      renderDynamicFields(document.getElementById(_formPrefix + 'fCat').value, {});
+    }
+
+    function renderDynamicFields(cat, values) {
+      const container = document.getElementById(_formPrefix + 'dynamicFields');
+      container.innerHTML = '';
+      if (!cat || !SCHEMA[cat]) return;
+
+      const pfx = _formPrefix;
+      const div = document.createElement('div');
+      div.className = 'sec-div';
+      container.appendChild(div);
+
+      SCHEMA[cat].fields.forEach(field => {
+        const fg = document.createElement('div');
+        fg.className = 'fg';
+        const val = eA(values[field.key] || '');
+        const ph = eA(field.ph || '');
+        const lbl = esc(field.label);
+
+        if (field.type === 'textarea') {
+          fg.innerHTML = `<label>${lbl}</label><textarea id="${pfx}cf_${field.key}" placeholder="${ph}">${esc(values[field.key] || '')}</textarea>`;
+        } else if (field.type === 'select') {
+          const opts = (field.options || []).map(o =>
+            `<option value="${eA(o)}"${values[field.key] === o ? ' selected' : ''}>${esc(o)}</option>`
+          ).join('');
+          fg.innerHTML = `<label>${lbl}</label><select id="${pfx}cf_${field.key}"><option value="">Select\u2026</option>${opts}</select>`;
+        } else {
+          fg.innerHTML = `<label>${lbl}</label><input type="${field.type}" id="${pfx}cf_${field.key}" placeholder="${ph}" value="${val}">`;
+        }
+
+        container.appendChild(fg);
+      });
+    }
+
+    function collectCustomFields(cat) {
+      if (!cat || !SCHEMA[cat]) return {};
+      const cf = {};
+      SCHEMA[cat].fields.forEach(f => {
+        const el = document.getElementById(`${_formPrefix}cf_${f.key}`);
+        if (el) cf[f.key] = el.value.trim();
+      });
+      return cf;
+    }
+
+    /* ── 14. Save / Delete ─────────────────────────────────────────────────── */
+    /*  Persistence operations for events and their attached files.
+     *  - saveEvent: validates required fields, writes to IndexedDB, handles
+     *    pending file uploads and deletions, updates in-memory allEvents.
+     *  - deleteEvent: confirms, removes all files then event from IndexedDB.
+     *  Both work with modal (_formPrefix='') or inline (_formPrefix='ec-').
+     *  See ARCHITECTURE.md §9 for full data operation details.             */
+    async function saveEvent() {
+      const p = _formPrefix;
+      const title = document.getElementById(p + 'fTitle').value.trim();
+      const category = document.getElementById(p + 'fCat').value;
+      const startDate = document.getElementById(p + 'fStart').value;
+      const endDate = document.getElementById(p + 'fEnd').value;
+
+      if (!title) { alert('Please enter a title.'); document.getElementById(p + 'fTitle').focus(); return; }
+      if (!category) { alert('Please select a category.'); document.getElementById(p + 'fCat').focus(); return; }
+      if (!startDate) { alert('Please enter a start date.'); document.getElementById(p + 'fStart').focus(); return; }
+
+      const customFields = collectCustomFields(category);
+      const keptFiles = existingFiles.filter(f => !deletedFileIds.includes(f.id));
+      const fileCount = keptFiles.length + pendingFiles.length;
+
+      const isNew = !allEvents.find(e => e.id === editId);
+      const now = new Date().toISOString();
+      const ev = {
+        id: editId, title, category, startDate, endDate,
+        customFields, fileCount,
+        updated: now,
+        created: isNew ? now : (allEvents.find(e => e.id === editId) || {}).created || now,
+      };
+
+      await DB.put('events', ev);
+
+      for (const fid of deletedFileIds) await DB.del('files', fid);
+
+      for (const pf of pendingFiles) {
+        const ab = await pf.file.arrayBuffer();
+        await DB.put('files', {
+          id: pf.id, eventId: editId,
+          name: pf.name, type: pf.type, size: pf.size,
+          data: ab, uploaded: now,
+        });
+      }
+
+      const idx = allEvents.findIndex(e => e.id === editId);
+      if (idx !== -1) allEvents[idx] = ev; else allEvents.push(ev);
+
+      if (p === 'ec-') {
+        collapseExpandedCard();
+      } else {
+        closeModal();
+      }
+      renderTimeline();
+    }
+
+    async function deleteEvent(id) {
+      if (!confirm('Delete this event and all attached files? This cannot be undone.')) return;
+      const files = await DB.byIndex('files', 'eventId', id);
+      for (const f of files) await DB.del('files', f.id);
+      await DB.del('events', id);
+      allEvents = allEvents.filter(e => e.id !== id);
+      if (_formPrefix === 'ec-') {
+        collapseExpandedCard();
+      } else {
+        closeModal();
+      }
+      renderTimeline();
+    }
+
+    /* ── 15. File Handling ─────────────────────────────────────────────────── */
+    /*  File attachment management for events.
+     *  - onFilesSelected: queues files as pendingFiles (saved on saveEvent).
+     *  - renderFilesList: displays existing + pending files with actions.
+     *  - removeFile: marks existing files for deletion or drops pending ones.
+     *  - downloadFile: retrieves ArrayBuffer from IndexedDB, creates blob URL.
+     *  Files are stored as ArrayBuffer in the 'files' IndexedDB store.
+     *  See ARCHITECTURE.md §10 for file attachment details.                */
+    function onFilesSelected(e) {
+      Array.from(e.target.files).forEach(f => {
+        pendingFiles.push({ id: uid(), name: f.name, type: f.type, size: f.size, file: f });
+      });
+      e.target.value = '';
+      renderFilesList();
+    }
+
+    function renderFilesList() {
+      const list = document.getElementById(_formPrefix + 'filesList');
+      if (!list) return;
+      list.innerHTML = '';
+      const kept = existingFiles.filter(f => !deletedFileIds.includes(f.id));
+      const isInline = _formPrefix === 'ec-';
+
+      [...kept, ...pendingFiles].forEach(f => {
+        const isPending = !!f.file;
+        const isImage = (f.type || '').startsWith('image/');
+        const row = document.createElement('div');
+        row.className = 'file-row';
+        row.innerHTML = `
+      <div class="file-row-name" title="${eA(f.name)}">${esc(f.name)}</div>
+      <div class="file-row-size">${fmtSz(f.size)}</div>
+      ${isPending
+            ? `<span class="file-row-tag">+ new</span>`
+            : `<div class="file-row-btns"><button class="btn-icon" onclick="downloadFile('${f.id}')" title="Download">&#8681;</button></div>`}
+      <div class="file-row-btns">
+        <button class="btn-icon danger" onclick="removeFile('${f.id}', ${isPending})" title="Remove">&#10005;</button>
+      </div>
+    `;
+        // In inline mode, make file names clickable for image preview or download
+        if (isInline && !isPending) {
+          const nameEl = row.querySelector('.file-row-name');
+          nameEl.style.cursor = 'pointer';
+          if (isImage) nameEl.style.color = '#58A6FF';
+          nameEl.addEventListener('click', () => ecFileClick(f.id));
+        }
+        list.appendChild(row);
+      });
+    }
+
+    function removeFile(id, isPending) {
+      if (isPending) {
+        pendingFiles = pendingFiles.filter(f => f.id !== id);
+      } else {
+        deletedFileIds.push(id);
+      }
+      renderFilesList();
+    }
+
+    async function downloadFile(id) {
+      const file = await DB.get('files', id);
+      if (!file) { alert('File not found.'); return; }
+      const blob = new Blob([file.data], { type: file.type || 'application/octet-stream' });
+      const url = URL.createObjectURL(blob);
+      const a = Object.assign(document.createElement('a'), { href: url, download: file.name });
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    /* ── 16. Export / Import ──────────────────────────────────────────────── */
+    /*  JSON-based data portability (events only, no file blobs).
+     *  - exportData: serializes allEvents to JSON, triggers download.
+     *  - importData: parses JSON, skips duplicate IDs, adds new events.
+     *  See ARCHITECTURE.md §9.3–9.4.                                       */
+    function exportData() {
+      const payload = JSON.stringify({
+        version: 1,
+        exported: new Date().toISOString(),
+        events: allEvents,
+      }, null, 2);
+      const url = URL.createObjectURL(new Blob([payload], { type: 'application/json' }));
+      const a = Object.assign(document.createElement('a'), {
+        href: url,
+        download: `timeline_backup_${new Date().toISOString().slice(0, 10)}.json`,
+      });
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    async function importData(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+      try {
+        const data = JSON.parse(await file.text());
+        const incoming = Array.isArray(data) ? data : (data.events || []);
+        if (!Array.isArray(incoming)) throw new Error('Unrecognized format.');
+        const existing = new Set(allEvents.map(ev => ev.id));
+        let added = 0, skipped = 0;
+        for (const ev of incoming) {
+          if (!ev.id || !ev.title) { skipped++; continue; }
+          if (existing.has(ev.id)) { skipped++; continue; }
+          await DB.put('events', ev);
+          allEvents.push(ev);
+          added++;
+        }
+        alert(`Import complete: ${added} event${added !== 1 ? 's' : ''} added, ${skipped} skipped.`);
+        renderTimeline();
+      } catch (err) {
+        alert('Import failed: ' + err.message);
+      }
+      e.target.value = '';
+    }
+
+    /* ── 17. Event Listeners & Initialization ──────────────────────────────── */
+    /*  Global listeners and app bootstrap.
+     *  - Escape key: collapses expanded card, or closes modal.
+     *  - Overlay click: closes modal when clicking backdrop.
+     *  - init(): populates category select, registers resize/wheel/scroll
+     *    listeners, opens IndexedDB, loads events, renders initial timeline.
+     *  See ARCHITECTURE.md §13 for initialization flow.                    */
+    document.getElementById('overlay').addEventListener('click', function (e) {
+      if (e.target === this) closeModal();
+    });
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape') {
+        const expanded = document.querySelector('.ev-card.expanded');
+        if (expanded) collapseCard(expanded);
+        else closeModal();
+      }
+    });
+
+    async function init() {
+      const sel = document.getElementById('fCat');
+      if (sel) {
+        Object.keys(SCHEMA).forEach(cat => {
+          const o = document.createElement('option');
+          o.value = o.textContent = cat;
+          sel.appendChild(o);
+        });
+      }
+
+      window.addEventListener('resize', () => renderTimeline());
+      window.addEventListener('wheel', onWheel, { passive: false });
+      window.addEventListener('scroll', onTimelineScroll);
+      window.addEventListener('scrollend', onScrollEnd);
+
+      await DB.open();
+      allEvents = await DB.all('events');
+      renderTimeline();
+    }
+
+    init();
+  </script>
+</body>
+
+</html>
