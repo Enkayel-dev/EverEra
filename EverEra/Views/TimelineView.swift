@@ -149,18 +149,6 @@ struct TimelineMainView: View {
                 // Total height comes from the render layout (expands with card state)
                 let totalH = render.totalHeight + topPad + bottomPad
 
-                // Snap offsets are always from the stable base layout
-                let snapOffsets: [CGFloat] = base.dateRows.map { $0.y + topPad - topPad }
-                // ↑ dateRow.y is in content space (0-based), scroll offset to land at top = dateRow.y
-                // But we add topPad in drawing, so the actual content-space position of the date line
-                // is (dateRow.y + topPad). The scroll offset to bring that to the top of the viewport
-                // is (dateRow.y + topPad) - 0 = dateRow.y + topPad. Since the viewport shows from
-                // scrollOffsetY, we want scrollOffsetY = dateRow.y + topPad - topPad = dateRow.y.
-                // Actually: content drawn at y=(dateRow.y + topPad). Viewport top = scrollOffsetY.
-                // For date line to sit at top: scrollOffsetY = dateRow.y + topPad - 0 = dateRow.y + topPad? 
-                // No — we want the line *just below the bubble* (~topPad from top).
-                // scrollOffsetY + topPad = dateRow.y + topPad → scrollOffsetY = dateRow.y. ✓
-
                 ZStack(alignment: .topLeading) {
                     ScrollView(.vertical, showsIndicators: true) {
                         ZStack(alignment: .topLeading) {

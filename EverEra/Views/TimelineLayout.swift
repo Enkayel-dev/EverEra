@@ -82,7 +82,6 @@ struct TimelineLayout {
 
     static func compute(
         events: [LSEvent],
-        focusedEventID: UUID? = nil,
         expandedEventID: UUID? = nil
     ) -> TimelineLayout? {
         guard !events.isEmpty else { return nil }
@@ -162,7 +161,6 @@ struct TimelineLayout {
                     let evStartStr = ev.startDate.map { Self.dateString(from: $0) } ?? ""
                     let evEndStr   = Self.dateString(from: ev.endDate ?? today)
                     let h = cardHeight(for: ev,
-                                       focusedID: focusedEventID,
                                        expandedID: expandedEventID)
                     if evStartStr == ds { maxAbove = max(maxAbove, h) }
                     if evEndStr == ds   { maxBelow = max(maxBelow, h) }
@@ -274,11 +272,9 @@ struct TimelineLayout {
 
     private static func cardHeight(
         for event: LSEvent,
-        focusedID: UUID?,
         expandedID: UUID?
     ) -> CGFloat {
         if event.id == expandedID { return expandedCardHeight }
-        if event.id == focusedID  { return summaryCardHeight }
         return collapsedCardHeight
     }
 
