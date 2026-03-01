@@ -3,8 +3,10 @@
 //  EverEra
 //
 //  The Temporal Surface — a vertical timeline where every event occupies a
-//  moment in calendar time. Events live in colour-coded lanes; a sticky date
-//  lens tracks the currently visible date range.
+//  moment in calendar time. Events live in colour-coded lanes; a Liquid Glass
+//  date bubble hovers over the date gutter tracking the nearest date as you
+//  scroll. Scroll snaps to event dates; the snapped event auto-promotes to
+//  summary state. Only a tap expands to the full detail view.
 //
 
 import SwiftUI
@@ -17,6 +19,25 @@ enum CardState: Equatable {
     case collapsed
     case summary
     case expanded
+}
+
+// MARK: - Custom snap-to-date scroll behavior
+
+/// Snaps the scroll view so that the nearest timeline date row (from the stable
+/// base layout) lands at `anchorY` from the top of the visible area.
+/// Using the *base* (all-collapsed) Y positions keeps snap targets stable
+/// even when card-state changes resize cards in the render layout.
+struct DateSnapBehavior: ScrollTargetBehavior {
+    /// Stable snap offsets in scroll-view content coordinates (already offset by topPad).
+    let snapContentOffsets: [CGFloat]
+
+    func updateTarget(_ target: inout ScrollTarget, context: TargetContext) {
+        guard !snapContentOffsets.isEmpty else { return }
+        let proposed = target.rect.minY
+        // Pick the closest stable snap point
+        let best = snapContentOffsets.min(by: { abs($0 - proposed) < abs($1 - proposed) }) ?? proposed
+        target.rect.origin.y = max(0, best)
+    }
 }
 
 // MARK: - TimelineMainView
@@ -43,15 +64,22 @@ struct TimelineMainView: View {
 
     @State private var cardStates: [UUID: CardState] = [:]
     @State private var showingAddEntity = false
-    @State private var layout: TimelineLayout?
+
+    /// Stable layout computed with ALL cards collapsed — drives snap targets and date bubble.
+    @State private var baseLayout: TimelineLayout?
+    /// Render layout computed with actual card states — drives drawing and card positions.
+    @State private var renderLayout: TimelineLayout?
+
+    /// The content-space scroll offset (minY of visible rect).
+    @State private var scrollOffsetY: CGFloat = 0
+    /// The date row currently nearest to the top of the viewport (for the sticky bubble).
+    @State private var visibleDateRow: TimelineDateRow? = nil
+    /// Event IDs whose start date matches the currently snapped date.
+    @State private var snappedEventIDs: Set<UUID> = []
 
     // Derived flat list of all events from all entities
     private var allEvents: [LSEvent] {
         entities.flatMap { $0.events }
-    }
-
-    private var focusedID: UUID? {
-        cardStates.first(where: { $0.value == .summary })?.key
     }
 
     private var expandedID: UUID? {
@@ -72,9 +100,7 @@ struct TimelineMainView: View {
         .navigationTitle("Timeline")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                Button {
-                    showingAddEntity = true
-                } label: {
+                Button { showingAddEntity = true } label: {
                     Label("Add Entity", systemImage: "plus")
                 }
             }
@@ -82,10 +108,11 @@ struct TimelineMainView: View {
         .sheet(isPresented: $showingAddEntity) {
             AddEntitySheet()
         }
-        .onChange(of: allEvents.map { $0.id }) { recalcLayout() }
-        .onChange(of: focusedID) { recalcLayout() }
-        .onChange(of: expandedID) { recalcLayout() }
-        .onAppear { recalcLayout() }
+        // Only rebuild both layouts when events are added/removed/changed
+        .onChange(of: allEvents.map { $0.id }) { rebuildLayouts() }
+        // Render layout also reacts to expanded state (summary never changes Y in render layout)
+        .onChange(of: expandedID) { rebuildRenderLayout() }
+        .onAppear { rebuildLayouts() }
     }
 
     // MARK: Empty state
@@ -113,117 +140,179 @@ struct TimelineMainView: View {
 
     private var timelineCanvas: some View {
         GeometryReader { geo in
-            ScrollView(.vertical, showsIndicators: true) {
-                if let layout {
-                    let cardLeft = labelArea + CGFloat(layout.numLanes) * laneWidth + cardGap
-                    let cardWidth = max(geo.size.width - cardLeft - 16, 200)
-                    let totalH = layout.totalHeight + topPad + bottomPad
+            // We need baseLayout for snap offsets and renderLayout for drawing.
+            // Both are optional; only show content when baseLayout is ready.
+            if let base = baseLayout {
+                let render = renderLayout ?? base
+                let cardLeft = labelArea + CGFloat(render.numLanes) * laneWidth + cardGap
+                let cardWidth = max(geo.size.width - cardLeft - 16, 200)
+                // Total height comes from the render layout (expands with card state)
+                let totalH = render.totalHeight + topPad + bottomPad
 
-                    ZStack(alignment: .topLeading) {
-                        // Background canvas: lines, labels, lane bars
-                        Canvas { ctx, size in
-                            drawGrid(ctx: ctx, layout: layout, size: size)
-                            drawLanes(ctx: ctx, layout: layout)
+                // Snap offsets are always from the stable base layout
+                let snapOffsets: [CGFloat] = base.dateRows.map { $0.y + topPad - topPad }
+                // ↑ dateRow.y is in content space (0-based), scroll offset to land at top = dateRow.y
+                // But we add topPad in drawing, so the actual content-space position of the date line
+                // is (dateRow.y + topPad). The scroll offset to bring that to the top of the viewport
+                // is (dateRow.y + topPad) - 0 = dateRow.y + topPad. Since the viewport shows from
+                // scrollOffsetY, we want scrollOffsetY = dateRow.y + topPad - topPad = dateRow.y.
+                // Actually: content drawn at y=(dateRow.y + topPad). Viewport top = scrollOffsetY.
+                // For date line to sit at top: scrollOffsetY = dateRow.y + topPad - 0 = dateRow.y + topPad? 
+                // No — we want the line *just below the bubble* (~topPad from top).
+                // scrollOffsetY + topPad = dateRow.y + topPad → scrollOffsetY = dateRow.y. ✓
+
+                ZStack(alignment: .topLeading) {
+                    ScrollView(.vertical, showsIndicators: true) {
+                        ZStack(alignment: .topLeading) {
+                            // Background canvas: grid lines, lane bars, dots
+                            Canvas { ctx, size in
+                                drawGrid(ctx: ctx, layout: render, size: size)
+                                drawLanes(ctx: ctx, layout: render)
+                            }
+                            .frame(width: geo.size.width, height: totalH)
+
+                            // Event cards overlaid at computed positions
+                            ForEach(render.segments) { seg in
+                                eventCardGroup(
+                                    seg: seg,
+                                    cardLeft: cardLeft,
+                                    cardWidth: cardWidth,
+                                    viewportHeight: geo.size.height
+                                )
+                            }
                         }
                         .frame(width: geo.size.width, height: totalH)
-
-                        // Event cards overlaid at computed positions
-                        ForEach(layout.segments) { seg in
-                            eventCardGroup(
-                                seg: seg,
-                                cardLeft: cardLeft,
-                                cardWidth: cardWidth
-                            )
-                        }
                     }
-                    .frame(width: geo.size.width, height: totalH)
+                    .scrollTargetBehavior(
+                        DateSnapBehavior(snapContentOffsets: base.dateRows.map { $0.y })
+                    )
+                    .onScrollGeometryChange(for: CGFloat.self) { g in
+                        g.contentOffset.y
+                    } action: { _, newY in
+                        scrollOffsetY = newY
+                        updateVisibleDate(base: base, render: render, offsetY: newY)
+                    }
+
+                    // ── Liquid Glass sticky date bubble ──
+                    // Positioned inside the left gutter, floating above date labels
+                    if let row = visibleDateRow {
+                        stickyDateBubble(for: row)
+                            .frame(width: labelArea, alignment: .center)
+                            .padding(.top, 6)
+                            .allowsHitTesting(false)
+                    }
                 }
             }
         }
     }
 
+    // MARK: - Sticky date bubble
+
+    @ViewBuilder
+    private func stickyDateBubble(for row: TimelineDateRow) -> some View {
+        VStack(spacing: 2) {
+            // Month/year — smaller, secondary
+            Text(formatMonthYear(row.date))
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(.secondary)
+                .textCase(.uppercase)
+
+            // Day — large, magnified relative to the tiny static gutter labels
+            Text(formatDay(row.date))
+                .font(.system(size: 22, weight: .bold, design: .rounded))
+                .foregroundStyle(row.isToday ? Color.accentColor : .primary)
+
+            if row.isToday {
+                Text("TODAY")
+                    .font(.system(size: 8, weight: .heavy))
+                    .foregroundStyle(Color.accentColor)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .glassEffect(.regular, in: .rect(cornerRadius: 12))
+        .animation(.spring(response: 0.28, dampingFraction: 0.82), value: row.dateStr)
+        .id(row.dateStr)
+    }
+
     // MARK: - Canvas drawing
 
     private func drawGrid(ctx: GraphicsContext, layout: TimelineLayout, size: CGSize) {
-        // Month rows
         for month in layout.months {
             let y = month.y + topPad
-            // January gets a thicker line
             let lineH: CGFloat = month.isJanuary ? 3 : 1
-            let lineColor = month.isJanuary
-                ? Color.primary.opacity(0.25)
-                : Color.primary.opacity(0.10)
-
             ctx.fill(
                 Path(CGRect(x: 0, y: y, width: size.width, height: lineH)),
-                with: .color(lineColor)
+                with: .color(Color.primary.opacity(month.isJanuary ? 0.25 : 0.10))
             )
 
-            // Month label centered in the month's height
             let labelY = y + month.height / 2
             let monthName = monthAbbrev(month.month)
             let labelStr = month.height > 14
                 ? "\(monthName.uppercased()) \(month.year)"
                 : "\(monthName.uppercased())"
-
-            let text = Text(labelStr)
-                .font(.system(size: 9, weight: .bold))
-                .foregroundStyle(Color.primary.opacity(0.3))
-            ctx.draw(text, at: CGPoint(x: labelArea / 2, y: labelY), anchor: .center)
+            ctx.draw(
+                Text(labelStr).font(.system(size: 9, weight: .bold)).foregroundStyle(Color.primary.opacity(0.3)),
+                at: CGPoint(x: labelArea / 2, y: labelY), anchor: .center
+            )
         }
 
-        // Date rows
         for row in layout.dateRows {
             let y = row.y + topPad
-            let lineColor = row.isToday
-                ? Color.accentColor.opacity(0.5)
-                : Color.accentColor.opacity(0.15)
+            let isSnapped = visibleDateRow?.dateStr == row.dateStr
+            let opacity: CGFloat = isSnapped ? 0.65 : (row.isToday ? 0.45 : 0.15)
 
-            // Horizontal date line (from end of label area to right edge)
             ctx.fill(
-                Path(CGRect(x: labelArea, y: y, width: size.width - labelArea, height: 1)),
-                with: .color(lineColor)
+                Path(CGRect(x: labelArea, y: y, width: size.width - labelArea, height: isSnapped ? 1.5 : 1)),
+                with: .color(Color.accentColor.opacity(opacity))
             )
-
-            // Date label pill
-            let dateText = row.isToday
-                ? "Today · \(formatDateShort(row.date))"
-                : formatDateShort(row.date)
-
-            let label = Text(dateText)
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(Color.accentColor.opacity(row.isToday ? 0.9 : 0.6))
-            ctx.draw(label, at: CGPoint(x: labelArea / 2, y: y), anchor: .center)
+            // Small date label in gutter (the bubble is the main indicator — this is secondary)
+            let label = Text(formatDateShort(row.date))
+                .font(.system(size: 8, weight: .semibold))
+                .foregroundStyle(Color.accentColor.opacity(isSnapped ? 0.0 : (row.isToday ? 0.7 : 0.45)))
+            ctx.draw(label, at: CGPoint(x: labelArea / 2, y: y + 8), anchor: .center)
         }
     }
 
     private func drawLanes(ctx: GraphicsContext, layout: TimelineLayout) {
+        let snappedIDs = snappedEventIDs
+        let snappedDateStr = visibleDateRow?.dateStr
+
         for seg in layout.segments {
             let x = labelArea + CGFloat(seg.lane) * laneWidth + laneWidth / 2
             let sy = seg.startY + topPad
             let ey = seg.endY + topPad
             let color = seg.event.category.color
+            let isSnapped = snappedIDs.contains(seg.event.id)
 
             // Vertical lane bar
             ctx.fill(
                 Path(CGRect(x: x - 1, y: sy, width: 2, height: ey - sy)),
-                with: .color(color.opacity(0.55))
+                with: .color(color.opacity(isSnapped ? 0.78 : 0.55))
             )
 
-            // Start dot (hollow ring)
+            let startDateStr = seg.event.startDate.map { TimelineLayout.dateString(from: $0) } ?? ""
+            let endDateStr = TimelineLayout.dateString(from: seg.event.endDate ?? Calendar.current.startOfDay(for: Date()))
+            let startGlows = isSnapped && snappedDateStr == startDateStr
+            let endGlows = isSnapped && snappedDateStr == endDateStr
+
+            // Start dot
             let startDot = CGRect(x: x - 5, y: sy - 5, width: 10, height: 10)
-            ctx.stroke(
-                Path(ellipseIn: startDot),
-                with: .color(color),
-                lineWidth: 2.5
-            )
+            if startGlows {
+                ctx.stroke(Path(ellipseIn: startDot.insetBy(dx: -5, dy: -5)), with: .color(color.opacity(0.2)), lineWidth: 4)
+                ctx.stroke(Path(ellipseIn: startDot.insetBy(dx: -2, dy: -2)), with: .color(color.opacity(0.45)), lineWidth: 2)
+            }
+            ctx.stroke(Path(ellipseIn: startDot), with: .color(color), lineWidth: startGlows ? 3 : 2.5)
 
-            // End dot (filled)
+            // End dot
             let endDot = CGRect(x: x - 5, y: ey - 5, width: 10, height: 10)
+            if endGlows {
+                ctx.stroke(Path(ellipseIn: endDot.insetBy(dx: -5, dy: -5)), with: .color(color.opacity(0.2)), lineWidth: 4)
+                ctx.stroke(Path(ellipseIn: endDot.insetBy(dx: -2, dy: -2)), with: .color(color.opacity(0.45)), lineWidth: 2)
+            }
             if seg.ongoing {
-                // Pulsing "ongoing" marker — draw as a smaller filled dot + ring
                 ctx.fill(Path(ellipseIn: endDot.insetBy(dx: 2, dy: 2)), with: .color(color))
-                ctx.stroke(Path(ellipseIn: endDot), with: .color(color.opacity(0.4)), lineWidth: 1.5)
+                ctx.stroke(Path(ellipseIn: endDot), with: .color(color.opacity(endGlows ? 0.7 : 0.4)), lineWidth: endGlows ? 2 : 1.5)
             } else {
                 ctx.fill(Path(ellipseIn: endDot), with: .color(color))
             }
@@ -236,10 +325,13 @@ struct TimelineMainView: View {
     private func eventCardGroup(
         seg: TimelineLaneSegment,
         cardLeft: CGFloat,
-        cardWidth: CGFloat
+        cardWidth: CGFloat,
+        viewportHeight: CGFloat
     ) -> some View {
         let state = cardStates[seg.id] ?? .collapsed
         let color = seg.event.category.color
+        let startH = cardHeightForState(state, viewportHeight: viewportHeight)
+        let endH = cardHeightForState(state, viewportHeight: viewportHeight)
 
         // Start card — sits ABOVE the start date line
         EventCard(
@@ -248,16 +340,12 @@ struct TimelineMainView: View {
             state: state,
             color: color,
             onTap: { cycleState(for: seg.id) },
-            onDismiss: { cardStates[seg.id] = .collapsed },
+            onDismiss: { withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) { cardStates[seg.id] = .collapsed } },
             modelContext: modelContext
         )
-        .frame(width: cardWidth)
-        .offset(
-            x: cardLeft,
-            y: seg.startY + topPad - cardHeight(for: seg.event, state: state)
-        )
+        .frame(width: cardWidth, height: startH)
+        .offset(x: cardLeft, y: seg.startY + topPad - startH)
 
-        // End card — sits BELOW the end date line (only if not ongoing)
         if !seg.ongoing {
             EventCard(
                 event: seg.event,
@@ -265,10 +353,10 @@ struct TimelineMainView: View {
                 state: state,
                 color: color,
                 onTap: { cycleState(for: seg.id) },
-                onDismiss: { cardStates[seg.id] = .collapsed },
+                onDismiss: { withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) { cardStates[seg.id] = .collapsed } },
                 modelContext: modelContext
             )
-            .frame(width: cardWidth)
+            .frame(width: cardWidth, height: endH)
             .offset(x: cardLeft, y: seg.endY + topPad + 4)
         }
     }
@@ -276,9 +364,7 @@ struct TimelineMainView: View {
     // MARK: - FAB
 
     private var addButton: some View {
-        Button {
-            showingAddEntity = true
-        } label: {
+        Button { showingAddEntity = true } label: {
             Image(systemName: "plus")
                 .font(.title2.weight(.semibold))
                 .frame(width: 48, height: 48)
@@ -287,30 +373,88 @@ struct TimelineMainView: View {
         .padding(24)
     }
 
-    // MARK: - Helpers
+    // MARK: - Scroll tracking
 
-    private func recalcLayout() {
-        layout = TimelineLayout.compute(
+    private func updateVisibleDate(base: TimelineLayout, render: TimelineLayout, offsetY: CGFloat) {
+        // The date line drawn at (dateRow.y + topPad) in content space.
+        // Viewport top is at scrollOffsetY. We track the date nearest to scrollOffsetY.
+        let targetY = offsetY + topPad   // content Y that maps to the top of the viewport
+
+        guard !base.dateRows.isEmpty else {
+            visibleDateRow = nil
+            snappedEventIDs = []
+            return
+        }
+
+        let nearest = base.dateRows.min(by: {
+            abs($0.y - targetY) < abs($1.y - targetY)
+        })
+        guard let nearest, nearest.dateStr != visibleDateRow?.dateStr else { return }
+
+        withAnimation(.spring(response: 0.22, dampingFraction: 0.85)) {
+            visibleDateRow = nearest
+
+            // Auto-promote events whose START date matches the snapped date
+            var newSnapped: Set<UUID> = []
+            for seg in render.segments {
+                let startStr = seg.event.startDate.map { TimelineLayout.dateString(from: $0) } ?? ""
+                if startStr == nearest.dateStr {
+                    newSnapped.insert(seg.event.id)
+                    // Only promote if currently collapsed (don't downgrade expanded)
+                    if cardStates[seg.event.id] == nil || cardStates[seg.event.id] == .collapsed {
+                        cardStates[seg.event.id] = .summary
+                    }
+                }
+            }
+            // Revert auto-promoted events when we scroll away
+            for id in snappedEventIDs where !newSnapped.contains(id) {
+                if cardStates[id] == .summary {
+                    cardStates[id] = .collapsed
+                }
+            }
+            snappedEventIDs = newSnapped
+        }
+        // Note: we deliberately do NOT call rebuildRenderLayout() here.
+        // Summary cards expand/contract purely via SwiftUI frame animation;
+        // the stable snap positions in baseLayout are never invalidated by card state.
+    }
+
+    // MARK: - Layout management
+
+    /// Full rebuild: recomputes both base (collapsed-only) and render layouts.
+    /// Called only when events are added/removed/modified — not on card state changes.
+    private func rebuildLayouts() {
+        baseLayout = TimelineLayout.compute(events: allEvents)
+        rebuildRenderLayout()
+    }
+
+    /// Rebuilds only the render layout with current card states.
+    /// Called when the expanded card changes (which actually shifts content).
+    private func rebuildRenderLayout() {
+        renderLayout = TimelineLayout.compute(
             events: allEvents,
-            focusedEventID: focusedID,
             expandedEventID: expandedID
         )
     }
 
+    // MARK: - Helpers
+
     private func cycleState(for id: UUID) {
-        let current = cardStates[id] ?? .collapsed
-        switch current {
-        case .collapsed: cardStates[id] = .summary
-        case .summary:   cardStates[id] = .expanded
-        case .expanded:  cardStates[id] = .collapsed
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+            let current = cardStates[id] ?? .collapsed
+            switch current {
+            case .collapsed: cardStates[id] = .summary
+            case .summary:   cardStates[id] = .expanded
+            case .expanded:  cardStates[id] = .collapsed
+            }
         }
     }
 
-    private func cardHeight(for event: LSEvent, state: CardState) -> CGFloat {
+    private func cardHeightForState(_ state: CardState, viewportHeight: CGFloat) -> CGFloat {
         switch state {
         case .collapsed: return TimelineLayout.collapsedCardHeight
         case .summary:   return TimelineLayout.summaryCardHeight
-        case .expanded:  return TimelineLayout.expandedCardHeight
+        case .expanded:  return min(TimelineLayout.expandedCardHeight, viewportHeight * 0.9)
         }
     }
 
@@ -321,15 +465,25 @@ struct TimelineMainView: View {
 
     private func formatDateShort(_ date: Date) -> String {
         let f = DateFormatter()
-        f.dateFormat = "MMM d, yyyy"
+        f.dateFormat = "MMM d"
+        return f.string(from: date)
+    }
+
+    private func formatMonthYear(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.dateFormat = "MMM yyyy"
+        return f.string(from: date)
+    }
+
+    private func formatDay(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.dateFormat = "d"
         return f.string(from: date)
     }
 }
 
 // MARK: - EventCard
 
-/// The card view rendered at each event's start and end positions.
-/// Three states: collapsed, summary (key fields), expanded (full edit form).
 enum EventCardType { case start; case end }
 
 struct EventCard: View {
@@ -342,12 +496,12 @@ struct EventCard: View {
     let onDismiss: () -> Void
     let modelContext: ModelContext
 
-    @State private var showingAddEvent = false
     @State private var showingFileImporter = false
     @State private var importError: String?
 
     var body: some View {
         cardContent
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(
                 RoundedRectangle(cornerRadius: 10)
                     .fill(.regularMaterial)
@@ -361,13 +515,11 @@ struct EventCard: View {
                     .fill(color)
                     .frame(width: 3)
                     .padding(.vertical, 6)
-                    .padding(.leading, 0)
             }
             .clipShape(RoundedRectangle(cornerRadius: 10))
-            .shadow(color: .black.opacity(state == .expanded ? 0.3 : 0.08), radius: state == .expanded ? 12 : 3)
+            .shadow(color: .black.opacity(state == .expanded ? 0.28 : 0.07), radius: state == .expanded ? 12 : 3)
             .contentShape(RoundedRectangle(cornerRadius: 10))
             .onTapGesture { if state != .expanded { onTap() } }
-            .sheet(isPresented: $showingFileImporter) { }
             .alert("Import Error", isPresented: .constant(importError != nil)) {
                 Button("OK") { importError = nil }
             } message: { Text(importError ?? "") }
@@ -376,12 +528,9 @@ struct EventCard: View {
     @ViewBuilder
     private var cardContent: some View {
         switch state {
-        case .collapsed:
-            collapsedBody
-        case .summary:
-            summaryBody
-        case .expanded:
-            expandedBody
+        case .collapsed: collapsedBody
+        case .summary:   summaryBody
+        case .expanded:  expandedBody
         }
     }
 
@@ -413,7 +562,8 @@ struct EventCard: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .padding(.leading, 6)   // left-border offset
+        .padding(.leading, 6)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     // MARK: Summary
@@ -429,7 +579,6 @@ struct EventCard: View {
                     .font(.caption2)
                     .foregroundStyle(.secondary)
 
-                // Show top 3 non-empty properties as key–value pairs
                 let topProps = event.properties
                     .filter { !$0.displayValue.isEmpty }
                     .sorted { $0.displayOrder < $1.displayOrder }
@@ -450,13 +599,14 @@ struct EventCard: View {
             .padding(.bottom, 8)
             .padding(.leading, 6)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
-    // MARK: Expanded (full edit form)
+    // MARK: Expanded
 
     private var expandedBody: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Header
+            // Fixed header
             HStack {
                 Image(systemName: event.category.systemImage)
                     .foregroundStyle(color)
@@ -475,15 +625,14 @@ struct EventCard: View {
 
             Divider()
 
+            // Scrollable content — fills remaining card height
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    // Title
                     formField("Title") {
                         TextField("Event title", text: $event.title)
                             .textFieldStyle(.roundedBorder)
                     }
 
-                    // Category
                     formField("Category") {
                         Picker("", selection: $event.category) {
                             ForEach(EventCategory.allCases, id: \.self) { cat in
@@ -494,7 +643,6 @@ struct EventCard: View {
                         .pickerStyle(.menu)
                     }
 
-                    // Dates
                     HStack(spacing: 12) {
                         formField("Start Date") {
                             DatePicker("", selection: Binding(
@@ -528,14 +676,12 @@ struct EventCard: View {
                         }
                     }
 
-                    // Notes
                     formField("Notes") {
                         TextField("Notes…", text: $event.notes, axis: .vertical)
                             .textFieldStyle(.roundedBorder)
                             .lineLimit(3...6)
                     }
 
-                    // Properties
                     if !event.properties.isEmpty {
                         Divider()
                         VStack(alignment: .leading, spacing: 8) {
@@ -549,7 +695,6 @@ struct EventCard: View {
                         }
                     }
 
-                    // Documents
                     if !event.documents.isEmpty {
                         Divider()
                         VStack(alignment: .leading, spacing: 6) {
@@ -569,7 +714,6 @@ struct EventCard: View {
                         }
                     }
 
-                    // Footer actions
                     Divider()
                     HStack {
                         Button(role: .destructive) {
@@ -604,22 +748,17 @@ struct EventCard: View {
         }
     }
 
-    // MARK: Computed helpers
-
     private var dateLabel: String {
         let fmt = DateFormatter()
         fmt.dateFormat = "MMM d, yyyy"
-        if cardType == .start {
-            return event.startDate.map { fmt.string(from: $0) } ?? "?"
-        } else {
-            return event.endDate.map { fmt.string(from: $0) } ?? "Present"
-        }
+        return cardType == .start
+            ? (event.startDate.map { fmt.string(from: $0) } ?? "?")
+            : (event.endDate.map { fmt.string(from: $0) } ?? "Present")
     }
 }
 
 // MARK: - PropertyInlineRow
 
-/// Compact editable row for a single LSProperty inside the expanded card.
 private struct PropertyInlineRow: View {
     @Bindable var property: LSProperty
 
@@ -660,5 +799,3 @@ private struct PropertyInlineRow: View {
         }
     }
 }
-
-
