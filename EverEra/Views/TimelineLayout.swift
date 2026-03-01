@@ -63,22 +63,23 @@ struct MonthKey: Comparable, Hashable {
 
 // MARK: - TimelineRow
 
-/// A single row in the timeline — either an event date (with one or more events)
-/// or a month that has no events in it.
+/// A single row in the timeline — either a month with one or more events
+/// (all events in the same month share one row side-by-side) or an empty month.
 enum TimelineRow: Identifiable, Hashable {
     case emptyMonth(year: Int, month: Int)
-    case eventDate(dateString: String, date: Date)
+    /// All events whose start date falls in the same calendar month.
+    case eventMonth(year: Int, month: Int, dateStrings: [String])
 
     var id: String {
         switch self {
         case .emptyMonth(let year, let month):
             return "empty-\(year)-\(month)"
-        case .eventDate(let dateString, _):
-            return "date-\(dateString)"
+        case .eventMonth(let year, let month, _):
+            return "month-\(year)-\(month)"
         }
     }
 
-    // Hashable conformance (Date is already Hashable)
+    // Hashable conformance
     static func == (lhs: TimelineRow, rhs: TimelineRow) -> Bool {
         lhs.id == rhs.id
     }
@@ -88,48 +89,37 @@ enum TimelineRow: Identifiable, Hashable {
     }
 }
 
-// MARK: - TimelineLaneSegment (simplified — no Y positions)
-
-/// Represents a single event's lane assignment for drawing connector segments.
-struct TimelineLaneSegment: Identifiable {
-    let id: UUID            // == event.id
-    let event: LSEvent
-    let lane: Int           // 0-based horizontal lane index
-    let ongoing: Bool
-}
-
 // MARK: - Row Builder
 
 /// Builds an ordered list of `TimelineRow` values from newest to oldest,
 /// inserting `.emptyMonth` entries for any month gaps between events.
+/// All events whose start date falls in the same calendar month share a single
+/// `.eventMonth` row so they can be displayed side-by-side.
 func buildTimelineRows(from events: [LSEvent]) -> [TimelineRow] {
     guard !events.isEmpty else { return [] }
 
     let calendar = Calendar.current
     let today = calendar.startOfDay(for: Date())
 
-    // Collect all unique dates and the month range they span.
+    // Collect the unique start-date strings per month.
     var datesByMonth: [MonthKey: Set<String>] = [:]
     var minMK = MonthKey(date: today)
     var maxMK = MonthKey(date: today)
 
-    func register(_ date: Date) {
-        let mk = MonthKey(date: date)
-        datesByMonth[mk, default: []].insert(TimelineHelpers.dateString(from: date))
+    for event in events {
+        guard let start = event.startDate else { continue }
+        let mk = MonthKey(date: start)
+        let ds = TimelineHelpers.dateString(from: start)
+        datesByMonth[mk, default: []].insert(ds)
         minMK = min(minMK, mk)
         maxMK = max(maxMK, mk)
-    }
-
-    for event in events {
-        if let start = event.startDate { register(start) }
-        register(event.endDate ?? today)
     }
 
     // Pad one month on each side so the timeline feels roomy.
     minMK = minMK.previous
     maxMK = maxMK.next
 
-    // Walk newest → oldest, emitting rows.
+    // Walk newest → oldest, emitting one row per month.
     var rows: [TimelineRow] = []
     var mk = maxMK
     while mk >= minMK {
@@ -137,12 +127,9 @@ func buildTimelineRows(from events: [LSEvent]) -> [TimelineRow] {
         if dates.isEmpty {
             rows.append(.emptyMonth(year: mk.year, month: mk.month))
         } else {
-            // Sort dates newest-first within the month.
-            for ds in dates.sorted(by: >) {
-                if let date = TimelineHelpers.date(from: ds) {
-                    rows.append(.eventDate(dateString: ds, date: date))
-                }
-            }
+            // Sort date strings newest-first so cards render newest-first (left).
+            let sorted = dates.sorted(by: >)
+            rows.append(.eventMonth(year: mk.year, month: mk.month, dateStrings: sorted))
         }
         mk = mk.previous
     }
@@ -150,57 +137,29 @@ func buildTimelineRows(from events: [LSEvent]) -> [TimelineRow] {
     return rows
 }
 
-// MARK: - Lane Assignment
+// MARK: - Category-Based Lane Assignment
 
-/// Greedy interval-graph colouring — assigns each event to the narrowest
-/// available lane so that no two overlapping events share a lane.
-///
-/// Returns event-ID → lane-index map and the total number of lanes.
-func assignLanes(events: [LSEvent]) -> (assignments: [UUID: Int], numLanes: Int) {
-    let calendar = Calendar.current
-    let today = calendar.startOfDay(for: Date())
-
-    // Sort events by start date ascending for stable assignment.
-    let sorted = events
-        .filter { $0.startDate != nil }
-        .sorted { ($0.startDate ?? .distantFuture) < ($1.startDate ?? .distantFuture) }
-
-    struct Interval { var sk: MonthKey; var ek: MonthKey }
-    var lanes: [[Interval]] = []
-    var assignments: [UUID: Int] = [:]
-
-    for event in sorted {
-        guard let start = event.startDate else { continue }
-        let end = event.endDate ?? today
-        let sk = MonthKey(date: start)
-        let ek = MonthKey(date: end)
-
-        var assigned = -1
-        for (i, lane) in lanes.enumerated() {
-            let overlaps = lane.contains { r in sk <= r.ek && ek >= r.sk }
-            if !overlaps { assigned = i; break }
+/// Fixed lane index for each event category.
+/// Categories are ordered left-to-right on the timeline; the order is stable
+/// so connector lines remain perfectly vertical across all rows.
+extension EventCategory {
+    /// 0-based column index in the lane zone.
+    var laneIndex: Int {
+        switch self {
+        case .employment:  return 0
+        case .housing:     return 1
+        case .education:   return 2
+        case .ownership:   return 3
+        case .health:      return 4
+        case .travel:      return 5
+        case .financial:   return 6
+        case .milestone:   return 7
+        case .other:       return 8
         }
-        if assigned == -1 { assigned = lanes.count; lanes.append([]) }
-        lanes[assigned].append(Interval(sk: sk, ek: ek))
-
-        assignments[event.id] = assigned
     }
 
-    return (assignments, max(lanes.count, 1))
-}
-
-/// Build `TimelineLaneSegment` array from events and pre-computed lane assignments.
-func buildSegments(events: [LSEvent], laneAssignments: [UUID: Int]) -> [TimelineLaneSegment] {
-    return events.compactMap { event in
-        guard event.startDate != nil,
-              let lane = laneAssignments[event.id] else { return nil }
-        return TimelineLaneSegment(
-            id: event.id,
-            event: event,
-            lane: lane,
-            ongoing: event.endDate == nil
-        )
-    }
+    /// Total number of lanes (one per category).
+    static var laneCount: Int { EventCategory.allCases.count }
 }
 
 // MARK: - Helpers

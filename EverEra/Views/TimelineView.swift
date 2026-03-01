@@ -20,6 +20,23 @@ enum CardState: Equatable {
     case expanded
 }
 
+// MARK: - Card role within the timeline
+
+/// Describes an event card's temporal role in a given row.
+/// This drives dot vertical alignment and connector-line clipping.
+enum CardRole: Equatable {
+    /// The event starts in this month/row — dot sits at the bottom of the card.
+    case start
+    /// The event ends in this month/row — dot sits at the top of the card.
+    case end
+    /// Ongoing event shown at today's row — treated the same as `.end`
+    /// (dot at top, line continues downward into older months).
+    case ongoing
+    /// The event spans this month but starts/ends in another row — dot at mid-row,
+    /// continuous line passes through the full row height.
+    case passThrough
+}
+
 // MARK: - TimelineMainView
 
 struct TimelineMainView: View {
@@ -63,25 +80,40 @@ struct TimelineMainView: View {
         buildTimelineRows(from: allEvents)
     }
 
-    private var eventsByDate: [String: [LSEvent]] {
-        let today = Calendar.current.startOfDay(for: Date())
-        var result: [String: [LSEvent]] = [:]
+    /// Maps a MonthKey → all events whose start date falls in that month.
+    private var eventsByMonth: [MonthKey: [LSEvent]] {
+        var result: [MonthKey: [LSEvent]] = [:]
         for event in allEvents {
-            if let start = event.startDate {
-                let ds = TimelineHelpers.dateString(from: start)
-                result[ds, default: []].append(event)
-            }
-            let endDS = TimelineHelpers.dateString(from: event.endDate ?? today)
-            if result[endDS]?.contains(where: { $0.id == event.id }) != true {
-                result[endDS, default: []].append(event)
-            }
+            guard let start = event.startDate else { continue }
+            let mk = MonthKey(date: start)
+            result[mk, default: []].append(event)
         }
         return result
     }
 
-    private var laneData: (assignments: [UUID: Int], numLanes: Int) {
-        assignLanes(events: allEvents)
+    /// Today's month key — used to place ongoing events as inline cards.
+    private var todayMonthKey: MonthKey { MonthKey(date: Date()) }
+
+    /// Returns the events to show as cards in a given month row.
+    /// For today's month this includes all ongoing events (started earlier,
+    /// no end date) so they appear as inline cards anchored to the present.
+    private func eventsForRow(_ mk: MonthKey) -> [LSEvent] {
+        var pool = eventsByMonth[mk] ?? []
+        if mk == todayMonthKey {
+            // Add ongoing events that didn't start this month
+            let startedThisMonth = Set(pool.map { $0.id })
+            let ongoing = allEvents.filter {
+                $0.endDate == nil &&
+                $0.startDate != nil &&
+                !startedThisMonth.contains($0.id)
+            }
+            pool.append(contentsOf: ongoing)
+        }
+        return pool
     }
+
+    /// Fixed lane count — one column per event category.
+    private let numLanes: Int = EventCategory.laneCount
 
     // MARK: Body
 
@@ -145,10 +177,29 @@ struct TimelineMainView: View {
 
     // MARK: Timeline content
 
+    /// For each row month, which events are passing through (started before, not yet ended).
+    /// These need a continuous lane line even though they have no card in that row.
+    private func passThroughEvents(for mk: MonthKey) -> [LSEvent] {
+        let today = Date()
+        return allEvents.filter { event in
+            guard let start = event.startDate else { return false }
+            let startMK = MonthKey(date: start)
+            // Event started before this month
+            guard startMK < mk else { return false }
+            // Event is ongoing or ends in/after this month
+            let endMK: MonthKey
+            if let end = event.endDate {
+                endMK = MonthKey(date: end)
+            } else {
+                endMK = MonthKey(date: today)
+            }
+            return endMK >= mk
+        }
+    }
+
     private var timelineContent: some View {
         GeometryReader { geo in
-            let lanes = laneData
-            let cardLeft = labelArea + CGFloat(lanes.numLanes) * laneWidth + cardGap
+            let cardLeft = labelArea + CGFloat(numLanes) * laneWidth + cardGap
             let cardWidth = max(geo.size.width - cardLeft - 16, 200)
 
             ZStack(alignment: .topLeading) {
@@ -158,16 +209,65 @@ struct TimelineMainView: View {
                             ForEach(timelineRows) { row in
                                 switch row {
                                 case .emptyMonth(let year, let month):
-                                    EmptyMonthRow(year: year, month: month)
+                                    let mk = MonthKey(year: year, month: month)
+                                    // Today's month may be empty in the normal event index but
+                                    // still has ongoing event cards to show.
+                                    let todayEvents = eventsForRow(mk)
+                                    if !todayEvents.isEmpty {
+                                        let sorted = todayEvents.sorted {
+                                            ($0.category.laneIndex, $0.startDate ?? .distantPast) <
+                                            ($1.category.laneIndex, $1.startDate ?? .distantPast)
+                                        }
+                                        EventMonthRow(
+                                            monthKey: mk,
+                                            events: sorted,
+                                            passThroughEvents: passThroughEvents(for: mk),
+                                            numLanes: numLanes,
+                                            cardStates: $cardStates,
+                                            labelArea: labelArea,
+                                            laneWidth: laneWidth,
+                                            cardWidth: cardWidth,
+                                            cardLeft: cardLeft,
+                                            snappedEventIDs: snappedEventIDs,
+                                            onSelect: { selectEvent($0, proxy: proxy) },
+                                            onCycleState: { cycleState(for: $0) },
+                                            onDismiss: { id in
+                                                withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+                                                    cardStates[id] = .collapsed
+                                                    if selectedEventID == id { selectedEventID = nil }
+                                                }
+                                            },
+                                            modelContext: modelContext
+                                        )
                                         .id(row.id)
+                                    } else {
+                                        EmptyMonthRow(
+                                            year: year,
+                                            month: month,
+                                            passThroughEvents: passThroughEvents(for: mk),
+                                            numLanes: numLanes,
+                                            laneWidth: laneWidth,
+                                            labelArea: labelArea
+                                        )
+                                        .id(row.id)
+                                    }
 
-                                case .eventDate(let dateStr, let date):
-                                    EventDateRow(
-                                        dateStr: dateStr,
-                                        date: date,
-                                        events: eventsByDate[dateStr] ?? [],
-                                        laneAssignments: lanes.assignments,
-                                        numLanes: lanes.numLanes,
+                                case .eventMonth(let year, let month, _):
+                                    let mk = MonthKey(year: year, month: month)
+                                    let monthEvents: [LSEvent] = {
+                                        let pool = eventsForRow(mk)
+                                        // Sort by category lane index so cards appear
+                                        // in the same left-to-right order as the lane columns.
+                                        return pool.sorted {
+                                            ($0.category.laneIndex, $0.startDate ?? .distantPast) <
+                                            ($1.category.laneIndex, $1.startDate ?? .distantPast)
+                                        }
+                                    }()
+                                    EventMonthRow(
+                                        monthKey: mk,
+                                        events: monthEvents,
+                                        passThroughEvents: passThroughEvents(for: mk),
+                                        numLanes: numLanes,
                                         cardStates: $cardStates,
                                         labelArea: labelArea,
                                         laneWidth: laneWidth,
@@ -188,37 +288,24 @@ struct TimelineMainView: View {
                                 }
                             }
                         }
-                        // scrollTargetLayout tells scrollPosition(id:) which views
-                        // are candidates for position tracking (read-only use here).
                         .scrollTargetLayout()
                     }
-                    // No scrollTargetBehavior — viewAligned(.always) was the root
-                    // cause of bounce/hesitation: it fought card-height changes that
-                    // occurred while the scroll physics were still running.
-                    // Manual snap-to-nearest is applied on .idle phase instead.
                     .scrollPosition(id: $snappedRowID, anchor: .top)
-                    // contentMargins(.top) must equal lensY so that when a row is
-                    // snapped to the top anchor its date label lands at the lens.
-                    // lensY = topInset + rowPadding(4) + labelTopPad(8) + labelHalf(9) ≈ topInset + 21
-                    // With topInset = 59 → lensY ≈ 80. See DateLabel.visualEffect below.
                     .contentMargins(.top, 59, for: .scrollContent)
                     .contentMargins(.bottom, 300, for: .scrollContent)
                     .scrollBounceBehavior(.basedOnSize)
-                    .onAppear { scrollProxy = proxy }
-                    // Snap-on-idle: after the user's scroll physics fully settle,
-                    // lock the nearest row cleanly to the top anchor, then
-                    // promote/demote cards with a safe delay so the height change
-                    // never overlaps active scroll physics.
+                    .onAppear {
+                        scrollProxy = proxy
+                        scrollToTodayAndPromote(proxy: proxy)
+                    }
                     .onScrollPhaseChange { _, newPhase in
                         guard newPhase == .idle else { return }
                         snapDebounceTask?.cancel()
-                        // 1. Snap-lock the resting position.
                         if let proxy = scrollProxy {
                             withAnimation(.spring(response: 0.25, dampingFraction: 0.9)) {
                                 proxy.scrollTo(snappedRowID, anchor: .top)
                             }
                         }
-                        // 2. Promote/demote cards after snap animation completes.
                         snapDebounceTask = Task { @MainActor in
                             try? await Task.sleep(for: .milliseconds(280))
                             guard !Task.isCancelled else { return }
@@ -227,11 +314,6 @@ struct TimelineMainView: View {
                     }
                 }
 
-                // Sticky date pill — floats over the left label gutter, vertically
-                // centered at lensY (80pt) so it aligns with the magnified DateLabel.
-                // frame(width: labelArea) constrains it to the same 160pt column that
-                // EventDateRow uses for its DateLabel, centering the pill within it.
-                // pill height ≈ 28pt → top = lensY - halfPill = 80 - 14 = 66.
                 StickyDateHeader(label: stickyDateLabel)
                     .frame(width: labelArea)
                     .padding(.top, 66)
@@ -256,21 +338,38 @@ struct TimelineMainView: View {
     /// Called once after scroll physics idle. `oldID` was removed — the
     /// `snappedEventIDs` set already tracks what was previously promoted.
     private func handleSnapChange(to newID: String?) {
-        // Determine which events are at the new snapped date
+        // Determine which events are at the new snapped month row
         var newSnapped: Set<UUID> = []
         var statesToUpdate: [UUID: CardState] = [:]
 
-        if let newID, case .eventDate(let dateStr, _) = timelineRows.first(where: { $0.id == newID }) {
-            for event in (eventsByDate[dateStr] ?? []) {
-                let startStr = event.startDate.map { TimelineHelpers.dateString(from: $0) } ?? ""
-                if startStr == dateStr {
-                    newSnapped.insert(event.id)
-                    // Selected event stays expanded; others get summary
-                    if event.id == selectedEventID {
-                        statesToUpdate[event.id] = .expanded
-                    } else if cardStates[event.id] == nil || cardStates[event.id] == .collapsed {
-                        statesToUpdate[event.id] = .summary
-                    }
+        // Resolve the month key from either an eventMonth or emptyMonth row ID.
+        let snappedMK: MonthKey? = {
+            guard let newID else { return nil }
+            if let row = timelineRows.first(where: { $0.id == newID }) {
+                switch row {
+                case .eventMonth(let y, let m, _): return MonthKey(year: y, month: m)
+                case .emptyMonth(let y, let m):    return MonthKey(year: y, month: m)
+                }
+            }
+            return nil
+        }()
+
+        if let mk = snappedMK {
+            // Only promote events whose start OR end date falls in this month.
+            // Ongoing events that float into today's row from an earlier start month
+            // should not be promoted when the user scrolls to a different month.
+            let nativeEvents = eventsForRow(mk).filter { event in
+                if let start = event.startDate, MonthKey(date: start) == mk { return true }
+                if let end = event.endDate, MonthKey(date: end) == mk { return true }
+                return false
+            }
+            for event in nativeEvents {
+                newSnapped.insert(event.id)
+                // Selected event stays expanded; others get summary
+                if event.id == selectedEventID {
+                    statesToUpdate[event.id] = .expanded
+                } else if cardStates[event.id] == nil || cardStates[event.id] == .collapsed {
+                    statesToUpdate[event.id] = .summary
                 }
             }
         }
@@ -294,14 +393,20 @@ struct TimelineMainView: View {
 
     // MARK: - Helpers
 
-    /// Select an event: programmatically scroll its date row to the top and expand.
+    /// Select an event: programmatically scroll its month row to the top and expand.
     private func selectEvent(_ id: UUID, proxy: ScrollViewProxy) {
-        // Find the row ID for this event's start date
         guard let event = allEvents.first(where: { $0.id == id }),
               let start = event.startDate else { return }
 
-        let ds = TimelineHelpers.dateString(from: start)
-        let rowID = "date-\(ds)"
+        // Ongoing events appear as cards in today's month row, not their start month.
+        let isOngoing = event.endDate == nil
+        let cardMK = isOngoing ? todayMonthKey : MonthKey(date: start)
+        // Today row may be rendered from an emptyMonth or eventMonth TimelineRow.
+        let rowID: String = {
+            let eventID = "month-\(cardMK.year)-\(cardMK.month)"
+            if timelineRows.contains(where: { $0.id == eventID }) { return eventID }
+            return "empty-\(cardMK.year)-\(cardMK.month)"
+        }()
 
         // Expand the card first so the row has its final height
         withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
@@ -341,8 +446,40 @@ struct TimelineMainView: View {
         switch row {
         case .emptyMonth(let year, let month):
             return MonthKey(year: year, month: month).label
-        case .eventDate(_, let date):
-            return Self.stickyDateFormatter.string(from: date)
+        case .eventMonth(let year, let month, _):
+            return MonthKey(year: year, month: month).label
+        }
+    }
+
+    // MARK: - Initial scroll to today
+
+    /// On first appear: scroll to today's row and promote all ongoing events to
+    /// summary state so the user immediately sees what is currently active.
+    private func scrollToTodayAndPromote(proxy: ScrollViewProxy) {
+        let mk = todayMonthKey
+        let rowID: String = {
+            let eventID = "month-\(mk.year)-\(mk.month)"
+            if timelineRows.contains(where: { $0.id == eventID }) { return eventID }
+            return "empty-\(mk.year)-\(mk.month)"
+        }()
+
+        Task { @MainActor in
+            // Small delay so LazyVStack has laid out before we scroll.
+            try? await Task.sleep(for: .milliseconds(80))
+            proxy.scrollTo(rowID, anchor: .top)
+            snappedRowID = rowID
+
+            // After the scroll settles, promote ongoing event cards to summary.
+            try? await Task.sleep(for: .milliseconds(350))
+            let ongoing = allEvents.filter { $0.endDate == nil && $0.startDate != nil }
+            withAnimation(.spring(response: 0.22, dampingFraction: 0.85)) {
+                for event in ongoing {
+                    if cardStates[event.id] == nil || cardStates[event.id] == .collapsed {
+                        cardStates[event.id] = .summary
+                    }
+                }
+                snappedEventIDs = Set(ongoing.map { $0.id })
+            }
         }
     }
 
@@ -351,12 +488,6 @@ struct TimelineMainView: View {
     static let shortDateFormatter: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "MMM d"
-        return f
-    }()
-
-    private static let stickyDateFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "MMM d, yyyy"
         return f
     }()
 }
@@ -450,6 +581,10 @@ private struct StickyDateHeader: View {
 private struct EmptyMonthRow: View {
     let year: Int
     let month: Int  // 1-based
+    let passThroughEvents: [LSEvent]
+    let numLanes: Int
+    let laneWidth: CGFloat
+    let labelArea: CGFloat
 
     private var monthLabel: String {
         MonthKey(year: year, month: month).label
@@ -462,23 +597,33 @@ private struct EmptyMonthRow: View {
             Spacer()
         }
         .frame(height: 40)
+        .background(alignment: .topLeading) {
+            LaneConnectorBackground(
+                events: [],
+                passThroughEvents: passThroughEvents,
+                laneWidth: laneWidth,
+                labelArea: labelArea,
+                cardStates: [:],
+                roles: [:],
+                snappedEventIDs: []
+            )
+        }
     }
 }
 
-// MARK: - EventDateRow
+// MARK: - EventMonthRow
 
-/// A row for a specific date, showing the magnifying date label, lane dots,
-/// and event cards.
-private struct EventDateRow: View {
-    let dateStr: String
-    let date: Date
-    let events: [LSEvent]
-    let laneAssignments: [UUID: Int]
+/// A row for a calendar month showing all events side-by-side, each getting
+/// an equal share of the available card width.
+private struct EventMonthRow: View {
+    let monthKey: MonthKey
+    let events: [LSEvent]          // all events in this month, sorted by category lane
+    let passThroughEvents: [LSEvent] // events passing through this month (no card here)
     let numLanes: Int
     @Binding var cardStates: [UUID: CardState]
     let labelArea: CGFloat
     let laneWidth: CGFloat
-    let cardWidth: CGFloat
+    let cardWidth: CGFloat         // total card zone width
     let cardLeft: CGFloat
     let snappedEventIDs: Set<UUID>
     let onSelect: (UUID) -> Void
@@ -486,37 +631,54 @@ private struct EventDateRow: View {
     let onDismiss: (UUID) -> Void
     let modelContext: ModelContext
 
-    private static let dateFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "MMM d, yyyy"
-        return f
-    }()
+    /// The height driven by the tallest card in the row.
+    private var rowCardHeight: CGFloat {
+        events.map { cardHeight(for: cardStates[$0.id] ?? .collapsed) }.max() ?? 68
+    }
+
+    /// Determines the card role for an event in this month row.
+    private func cardRole(for event: LSEvent) -> CardRole {
+        // If the event is ongoing (no end date) it is shown here as the "current" endpoint.
+        if event.endDate == nil { return .ongoing }
+        // If the event ends in this month it is an end card.
+        if let end = event.endDate, MonthKey(date: end) == monthKey { return .end }
+        // Otherwise it starts here (start date is in this month).
+        return .start
+    }
 
     var body: some View {
+        let roles: [UUID: CardRole] = Dictionary(uniqueKeysWithValues: events.map { ($0.id, cardRole(for: $0)) })
+
         HStack(alignment: .top, spacing: 0) {
-            // Left gutter: static date label
-            DateLabel(text: Self.dateFormatter.string(from: date), isMonth: false)
+            // Left gutter: month label
+            DateLabel(text: monthKey.label, isMonth: true)
                 .frame(width: labelArea, alignment: .center)
                 .padding(.top, 8)
 
-            // Lane zone: colored dots
+            // Lane zone: colored dots for all events in this month
             LaneDotColumn(
                 events: events,
-                laneAssignments: laneAssignments,
+                passThroughEvents: passThroughEvents,
                 numLanes: numLanes,
                 laneWidth: laneWidth,
+                cardStates: cardStates,
+                roles: roles,
                 snappedEventIDs: snappedEventIDs
             )
-            .padding(.top, 8)
 
-            // Cards column
-            VStack(spacing: 8) {
+            // Cards: side-by-side, each getting an equal share of cardWidth.
+            // cardWidth is the total available width for all cards combined.
+            let count = max(events.count, 1)
+            let perCard = (cardWidth - CGFloat(count - 1) * 8) / CGFloat(count)
+
+            HStack(alignment: .top, spacing: 8) {
                 ForEach(events) { event in
                     let state = cardStates[event.id] ?? .collapsed
+                    let role = roles[event.id] ?? .start
                     let color = event.category.color
                     EventCard(
                         event: event,
-                        cardType: .start,
+                        cardType: (role == .start) ? .start : .end,
                         state: state,
                         color: color,
                         onTap: {
@@ -529,7 +691,7 @@ private struct EventDateRow: View {
                         onDismiss: { onDismiss(event.id) },
                         modelContext: modelContext
                     )
-                    .frame(maxWidth: .infinity)
+                    .frame(width: perCard)
                     .frame(height: cardHeight(for: state))
                 }
             }
@@ -542,9 +704,11 @@ private struct EventDateRow: View {
         .background(alignment: .topLeading) {
             LaneConnectorBackground(
                 events: events,
-                laneAssignments: laneAssignments,
+                passThroughEvents: passThroughEvents,
                 laneWidth: laneWidth,
                 labelArea: labelArea,
+                cardStates: cardStates,
+                roles: roles,
                 snappedEventIDs: snappedEventIDs
             )
         }
@@ -561,74 +725,144 @@ private struct EventDateRow: View {
 
 // MARK: - LaneDotColumn
 
-/// Draws colored dots in each lane for events at this date.
+/// Draws colored dots in each lane, positioned vertically based on the event's
+/// role: end/ongoing → top of card, start → bottom of card, passThrough → center.
+/// Lane positions are fixed by category — employment is always lane 0, housing lane 1, etc.
 private struct LaneDotColumn: View {
     let events: [LSEvent]
-    let laneAssignments: [UUID: Int]
+    let passThroughEvents: [LSEvent]
     let numLanes: Int
     let laneWidth: CGFloat
+    let cardStates: [UUID: CardState]
+    let roles: [UUID: CardRole]
     let snappedEventIDs: Set<UUID>
 
     var body: some View {
         HStack(spacing: 0) {
             ForEach(0..<numLanes, id: \.self) { lane in
-                ZStack {
-                    if let event = events.first(where: { laneAssignments[$0.id] == lane }) {
+                // Category-based lookup: find an event whose category maps to this lane.
+                let cardEvent = events.first(where: { $0.category.laneIndex == lane })
+
+                ZStack(alignment: .center) {
+                    if let event = cardEvent {
                         let isSnapped = snappedEventIDs.contains(event.id)
                         let color = event.category.color
+                        let role = roles[event.id] ?? .start
+                        let dotSize: CGFloat = isSnapped ? 10 : 7
+                        let dotAlignment: Alignment = {
+                            switch role {
+                            case .end, .ongoing: return .top
+                            case .start:         return .bottom
+                            case .passThrough:   return .center
+                            }
+                        }()
 
-                        // Pulsing glow halo — GPU-driven repeatForever avoids
-                        // the per-frame CPU cost of TimelineView(.animation).
-                        if isSnapped {
-                            PulsingHalo(color: color)
+                        ZStack(alignment: dotAlignment) {
+                            Color.clear
+                            if isSnapped { PulsingHalo(color: color) }
+                            Circle()
+                                .fill(color)
+                                .frame(width: dotSize, height: dotSize)
+                                .shadow(color: color.opacity(isSnapped ? 0.7 : 0), radius: isSnapped ? 6 : 0)
                         }
-
-                        Circle()
-                            .fill(color)
-                            .frame(width: isSnapped ? 10 : 7, height: isSnapped ? 10 : 7)
-                            .shadow(color: color.opacity(isSnapped ? 0.7 : 0), radius: isSnapped ? 6 : 0)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else {
+                        Color.clear
                     }
                 }
-                .frame(width: laneWidth, height: 20)
+                .frame(width: laneWidth)
+                .frame(maxHeight: .infinity)
             }
         }
+        .frame(maxHeight: .infinity)
     }
 }
 
 // MARK: - LaneConnectorBackground
 
-/// Draws vertical lane bar segments behind each EventDateRow.
+/// Draws vertical lane connector lines behind each row, clipped so they run
+/// dot-to-dot rather than always spanning the full row height.
+///
+/// Lane X positions are derived from event.category.laneIndex, so lines are
+/// perfectly continuous across all rows regardless of which events share a month.
+///
+/// - pass-through events: full-height faint line (event is active but has no card here)
+/// - end / ongoing events: line from row top → dot (dot is near top of card)
+/// - start events: line from dot → row bottom (dot is near bottom of card)
 private struct LaneConnectorBackground: View {
     let events: [LSEvent]
-    let laneAssignments: [UUID: Int]
+    let passThroughEvents: [LSEvent]
     let laneWidth: CGFloat
     let labelArea: CGFloat
+    let cardStates: [UUID: CardState]
+    let roles: [UUID: CardRole]
     let snappedEventIDs: Set<UUID>
+
+    /// Vertical offset from the row edge to the dot centre.
+    /// Row has .padding(.vertical, 4) on the outer HStack and .padding(.vertical, 4)
+    /// on the card zone, so cards start ~8 pt from the background edge.
+    private let edgeInset: CGFloat = 8
+    private let dotRadius: CGFloat = 5  // half of max dot size (10)
+
+    private func laneX(for event: LSEvent) -> CGFloat {
+        labelArea + CGFloat(event.category.laneIndex) * laneWidth + laneWidth / 2
+    }
+
+    /// Returns the Y coordinate of the dot for `event` within the background rect.
+    private func dotY(for event: LSEvent, height: CGFloat) -> CGFloat {
+        let role = roles[event.id] ?? .start
+        switch role {
+        case .end, .ongoing:
+            return edgeInset + dotRadius
+        case .start:
+            return height - edgeInset - dotRadius
+        case .passThrough:
+            return height / 2
+        }
+    }
 
     var body: some View {
         GeometryReader { geo in
-            ForEach(events) { event in
-                if let lane = laneAssignments[event.id] {
-                    let x = labelArea + CGFloat(lane) * laneWidth + laneWidth / 2
-                    let isSnapped = snappedEventIDs.contains(event.id)
-                    let color = event.category.color
+            let h = geo.size.height
 
-                    // Glow halo behind the line when snapped
-                    if isSnapped {
-                        Path { path in
-                            path.move(to: CGPoint(x: x, y: 0))
-                            path.addLine(to: CGPoint(x: x, y: geo.size.height))
-                        }
-                        .stroke(color.opacity(0.25), lineWidth: 6)
-                        .blur(radius: 3)
-                    }
-
-                    Path { path in
-                        path.move(to: CGPoint(x: x, y: 0))
-                        path.addLine(to: CGPoint(x: x, y: geo.size.height))
-                    }
-                    .stroke(color.opacity(isSnapped ? 0.75 : 0.3), lineWidth: isSnapped ? 2.5 : 2)
+            // Pass-through lines — full height, faint
+            ForEach(passThroughEvents) { event in
+                let x = laneX(for: event)
+                let color = event.category.color
+                Path { path in
+                    path.move(to: CGPoint(x: x, y: 0))
+                    path.addLine(to: CGPoint(x: x, y: h))
                 }
+                .stroke(color.opacity(0.25), lineWidth: 1.5)
+            }
+
+            // Event card lines — clipped to dot position
+            ForEach(events) { event in
+                let x = laneX(for: event)
+                let isSnapped = snappedEventIDs.contains(event.id)
+                let color = event.category.color
+                let role = roles[event.id] ?? .start
+                let dotYPos = dotY(for: event, height: h)
+
+                // Line segment: top of row → dot (end/ongoing) or dot → bottom (start)
+                let lineStart: CGFloat = (role == .start) ? dotYPos : 0
+                let lineEnd: CGFloat   = (role == .start) ? h       : dotYPos
+
+                // Glow halo when snapped
+                if isSnapped {
+                    Path { path in
+                        path.move(to: CGPoint(x: x, y: lineStart))
+                        path.addLine(to: CGPoint(x: x, y: lineEnd))
+                    }
+                    .stroke(color.opacity(0.25), lineWidth: 6)
+                    .blur(radius: 3)
+                }
+
+                Path { path in
+                    path.move(to: CGPoint(x: x, y: lineStart))
+                    path.addLine(to: CGPoint(x: x, y: lineEnd))
+                }
+                .stroke(color.opacity(isSnapped ? 0.75 : 0.3), lineWidth: isSnapped ? 2.5 : 2)
             }
         }
     }

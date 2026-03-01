@@ -6,8 +6,13 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		01B00FE72F54ADB900330FED /* Architecture.md in Resources */ = {isa = PBXBuildFile; fileRef = 01B00FE62F54AD9700330FED /* Architecture.md */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
 		018D844F2F51EF2200943955 /* EverEra.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = EverEra.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		01B00FE62F54AD9700330FED /* Architecture.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = Architecture.md; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -34,6 +39,7 @@
 			children = (
 				018D84512F51EF2200943955 /* EverEra */,
 				018D84502F51EF2200943955 /* Products */,
+				01B00FE62F54AD9700330FED /* Architecture.md */,
 			);
 			sourceTree = "<group>";
 		};
@@ -109,6 +115,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				01B00FE72F54ADB900330FED /* Architecture.md in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
