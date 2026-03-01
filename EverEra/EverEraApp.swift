@@ -5,6 +5,10 @@
 //  App entry point.  Configures the SwiftData ModelContainer for the full
 //  LifeGraph schema: LSEntity → LSEvent → LSDocument.
 //
+//  Export / Import commands are wired through a @FocusedValue so that the
+//  menu items can trigger actions defined inside ContentView, which does
+//  have access to the SwiftData environment.
+//
 
 import SwiftUI
 import SwiftData
@@ -41,37 +45,46 @@ struct EverEraApp: App {
     }
 }
 
+// MARK: - FocusedValue key for archive actions
+
+/// Allows the Commands menu to trigger export/import actions
+/// defined inside the focused ContentView.
+struct ArchiveActionsKey: FocusedValueKey {
+    typealias Value = ArchiveActions
+}
+
+struct ArchiveActions {
+    var exportArchive: () -> Void
+    var importArchive: () -> Void
+}
+
+extension FocusedValues {
+    var archiveActions: ArchiveActions? {
+        get { self[ArchiveActionsKey.self] }
+        set { self[ArchiveActionsKey.self] = newValue }
+    }
+}
+
 // MARK: - EverEraCommands
 
 struct EverEraCommands: Commands {
-    @Environment(\.modelContext) private var modelContext
-    @Query private var entities: [LSEntity]
-
-    @State private var showingExporter = false
-    @State private var showingImporter = false
-    @State private var exportDocument: EverEraJSONDocument?
-    @State private var exportError: String?
-    @State private var importError: String?
+    @FocusedValue(\.archiveActions) private var archiveActions
 
     var body: some Commands {
         CommandGroup(after: .saveItem) {
             Divider()
 
             Button("Export Archive…") {
-                do {
-                    let data = try DataExportService.exportJSON(entities: entities)
-                    exportDocument = EverEraJSONDocument(data: data)
-                    showingExporter = true
-                } catch {
-                    exportError = error.localizedDescription
-                }
+                archiveActions?.exportArchive()
             }
             .keyboardShortcut("e", modifiers: [.command, .shift])
+            .disabled(archiveActions == nil)
 
             Button("Import Archive…") {
-                showingImporter = true
+                archiveActions?.importArchive()
             }
             .keyboardShortcut("i", modifiers: [.command, .shift])
+            .disabled(archiveActions == nil)
         }
     }
 }

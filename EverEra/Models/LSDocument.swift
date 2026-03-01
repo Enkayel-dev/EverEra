@@ -121,8 +121,39 @@ final class LSDocument {
             do {
                 let text = try await OCRService.shared.extractText(from: capturedURL)
                 doc.ocrContent = text
+                // Once OCR finishes, kick off AI summarisation if possible.
+                doc.runSummaryIfNeeded()
             } catch {
                 // OCR is best-effort; silently ignore failures.
+            }
+        }
+    }
+
+    /// Kicks off background AI summarisation using FoundationModels.
+    /// Requires Apple Intelligence to be available and enabled.
+    /// Called automatically after OCR completes, or can be triggered manually.
+    @MainActor
+    func runSummaryIfNeeded() {
+        guard inferredSummary.isEmpty,
+              !ocrContent.isEmpty,
+              SummaryService.isAvailable else { return }
+        let text = ocrContent
+        let doc = self
+        Task {
+            do {
+                let summary = try await SummaryService.shared.summarise(ocrText: text)
+                // Store a compact representation: one-liner + key facts joined by newlines.
+                let facts = summary.keyFacts.map { "• \($0)" }.joined(separator: "\n")
+                doc.inferredSummary = [summary.oneLiner, facts]
+                    .filter { !$0.isEmpty }
+                    .joined(separator: "\n\n")
+                // Adopt the suggested title if the current display name looks like a raw filename.
+                if !summary.suggestedTitle.isEmpty,
+                   doc.displayName.contains(where: { $0 == "_" || $0.isNumber }) {
+                    doc.displayName = summary.suggestedTitle
+                }
+            } catch {
+                // Summarisation is best-effort; silently ignore failures.
             }
         }
     }
