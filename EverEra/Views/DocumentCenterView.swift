@@ -94,11 +94,11 @@ struct DocumentCenterView: View {
         ScrollView(.horizontal, showsIndicators: false) {
             GlassEffectContainer(spacing: 8) {
                 HStack(spacing: 8) {
-                    FilterChipButton(label: "All", isSelected: kindFilter == nil) {
+                    FilterChip(label: "All", isSelected: kindFilter == nil) {
                         kindFilter = nil
                     }
                     ForEach(DocumentKind.allCases, id: \.self) { kind in
-                        FilterChipButton(
+                        FilterChip(
                             label: kind.rawValue,
                             systemImage: kind.systemImage,
                             isSelected: kindFilter == kind
@@ -169,31 +169,6 @@ struct DocumentCenterView: View {
     }
 }
 
-// MARK: - FilterChipButton (local alias avoids name clash)
-
-private struct FilterChipButton: View {
-    let label: String
-    var systemImage: String? = nil
-    let isSelected: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Group {
-                if let img = systemImage {
-                    Label(label, systemImage: img)
-                } else {
-                    Text(label)
-                }
-            }
-            .font(.caption.weight(.medium))
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-        }
-        .buttonStyle(.glass(isSelected ? .regular.tint(.accentColor) : .regular))
-    }
-}
-
 // MARK: - DocumentRowView
 
 private struct DocumentRowView: View {
@@ -227,6 +202,8 @@ private struct DocumentRowView: View {
                 .foregroundStyle(.tertiary)
         }
         .padding(.vertical, 4)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(document.displayName), \(document.kind.rawValue)\(document.event.map { ", linked to \($0.title)" } ?? "")")
     }
 }
 

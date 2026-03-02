@@ -12,6 +12,17 @@ import SwiftUI
 import SwiftData
 import UniformTypeIdentifiers
 
+// MARK: - Lens geometry constants
+
+/// Constants governing the date-label lens effect and sticky header placement.
+/// `lensY` is the focal point (in scroll-view coordinates) where date labels
+/// reach maximum scale. The sticky pill sits just above it.
+private enum LensGeometry {
+    nonisolated static let lensY: CGFloat = 80
+    nonisolated static let halfPillHeight: CGFloat = 14
+    static var stickyPadding: CGFloat { lensY - halfPillHeight }
+}
+
 // MARK: - Card presentation state
 
 enum CardState: Equatable {
@@ -29,6 +40,8 @@ enum CardRole: Equatable {
     case start
     /// The event ends in this month/row — dot sits at the top of the card.
     case end
+    /// The event starts and ends in the same month — dot centered vertically.
+    case single
     /// Ongoing event shown at today's row — treated the same as `.end`
     /// (dot at top, line continues downward into older months).
     case ongoing
@@ -95,21 +108,27 @@ struct TimelineMainView: View {
     private var todayMonthKey: MonthKey { MonthKey(date: Date()) }
 
     /// Returns the events to show as cards in a given month row.
-    /// For today's month this includes all ongoing events (started earlier,
-    /// no end date) so they appear as inline cards anchored to the present.
+    ///
+    /// Three cases this handles:
+    ///   (a) Event starts (or ends) in this month — already in `eventsByMonth[mk]`.
+    ///   (b) Ongoing event (no end date) that started in a previous month — added
+    ///       to today's row so it appears as a live card anchored to the present.
+    ///   (c) Completed event whose start and end are both in past months — NOT
+    ///       added here; it only appears in its own start/end month rows.
+    ///
+    /// The `alreadyPresent` set prevents duplicates when an ongoing event's start
+    /// month happens to be today's month (it would already be in `baseEvents`).
     private func eventsForRow(_ mk: MonthKey) -> [LSEvent] {
-        var pool = eventsByMonth[mk] ?? []
-        if mk == todayMonthKey {
-            // Add ongoing events that didn't start this month
-            let startedThisMonth = Set(pool.map { $0.id })
-            let ongoing = allEvents.filter {
-                $0.endDate == nil &&
-                $0.startDate != nil &&
-                !startedThisMonth.contains($0.id)
-            }
-            pool.append(contentsOf: ongoing)
+        let baseEvents = eventsByMonth[mk] ?? []
+        guard mk == todayMonthKey else { return baseEvents }
+
+        let alreadyPresent = Set(baseEvents.map { $0.id })
+        let ongoingFromPast = allEvents.filter {
+            $0.endDate == nil &&
+            $0.startDate != nil &&
+            !alreadyPresent.contains($0.id)
         }
-        return pool
+        return baseEvents + ongoingFromPast
     }
 
     /// Fixed lane count — one column per event category.
@@ -177,8 +196,11 @@ struct TimelineMainView: View {
 
     // MARK: Timeline content
 
-    /// For each row month, which events are passing through (started before, not yet ended).
-    /// These need a continuous lane line even though they have no card in that row.
+    /// Events that pass through `mk` without starting or ending in it.
+    ///
+    /// These need a continuous lane line even though they have no card in this row.
+    /// The guard uses strict less-than (`startMK < mk`) because an event whose
+    /// start month equals `mk` is a card-bearing row, not a pass-through.
     private func passThroughEvents(for mk: MonthKey) -> [LSEvent] {
         let today = Date()
         return allEvents.filter { event in
@@ -316,7 +338,7 @@ struct TimelineMainView: View {
 
                 StickyDateHeader(label: stickyDateLabel)
                     .frame(width: labelArea)
-                    .padding(.top, 66)
+                    .padding(.top, LensGeometry.stickyPadding)
             }
         }
     }
@@ -330,6 +352,7 @@ struct TimelineMainView: View {
                 .frame(width: 48, height: 48)
         }
         .buttonStyle(.glass)
+        .accessibilityLabel("Add entity")
         .padding(24)
     }
 
@@ -510,7 +533,7 @@ private struct DateLabel: View {
                 // Lens center in scroll-view coordinate space.
                 // Derivation: contentMargins.top(59) + rowPad(4) + labelPad(8) + labelHalf(9) = 80.
                 // Must stay in sync with StickyDateHeader's .padding(.top, 66) (lensY - halfPill).
-                let lensY: CGFloat = 80
+                let lensY: CGFloat = LensGeometry.lensY
                 let frame = geometry.frame(in: .scrollView)
                 let dist = abs(frame.midY - lensY)
                 let radius: CGFloat = 80
@@ -572,6 +595,7 @@ private struct StickyDateHeader: View {
             }
             // Animate text cross-fades, not position — keeps the pill stationary.
             .animation(.easeOut(duration: 0.15), value: label)
+            .accessibilityLabel(label.isEmpty ? "Date header" : label)
     }
 }
 
@@ -640,6 +664,11 @@ private struct EventMonthRow: View {
     private func cardRole(for event: LSEvent) -> CardRole {
         // If the event is ongoing (no end date) it is shown here as the "current" endpoint.
         if event.endDate == nil { return .ongoing }
+        // If both start and end fall in this same month, it's a single-month event.
+        if let start = event.startDate, let end = event.endDate,
+           MonthKey(date: start) == monthKey && MonthKey(date: end) == monthKey {
+            return .single
+        }
         // If the event ends in this month it is an end card.
         if let end = event.endDate, MonthKey(date: end) == monthKey { return .end }
         // Otherwise it starts here (start date is in this month).
@@ -678,7 +707,7 @@ private struct EventMonthRow: View {
                     let color = event.category.color
                     EventCard(
                         event: event,
-                        cardType: (role == .start) ? .start : .end,
+                        cardType: (role == .start || role == .single) ? .start : .end,
                         state: state,
                         color: color,
                         onTap: {
@@ -718,6 +747,9 @@ private struct EventMonthRow: View {
         switch state {
         case .collapsed: return 68
         case .summary:   return 120
+        // 480 pt is a fixed cap — the inner ScrollView handles overflow.
+        // Future: measure content with `.onGeometryChange`, store in
+        // `expandedHeights: [UUID: CGFloat]`, and clamp to 200...600.
         case .expanded:  return 480
         }
     }
@@ -751,9 +783,10 @@ private struct LaneDotColumn: View {
                         let dotSize: CGFloat = isSnapped ? 10 : 7
                         let dotAlignment: Alignment = {
                             switch role {
-                            case .end, .ongoing: return .top
-                            case .start:         return .bottom
-                            case .passThrough:   return .center
+                            case .end, .ongoing:   return .top
+                            case .start:           return .bottom
+                            case .single:          return .center
+                            case .passThrough:     return .center
                             }
                         }()
 
@@ -766,6 +799,7 @@ private struct LaneDotColumn: View {
                                 .shadow(color: color.opacity(isSnapped ? 0.7 : 0), radius: isSnapped ? 6 : 0)
                         }
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .accessibilityLabel("\(event.category.rawValue) lane")
                     } else {
                         Color.clear
                     }
@@ -816,7 +850,7 @@ private struct LaneConnectorBackground: View {
             return edgeInset + dotRadius
         case .start:
             return height - edgeInset - dotRadius
-        case .passThrough:
+        case .single, .passThrough:
             return height / 2
         }
     }
@@ -905,6 +939,8 @@ struct EventCard: View {
             .clipShape(RoundedRectangle(cornerRadius: 10))
             .shadow(color: .black.opacity(state == .expanded ? 0.28 : 0.07), radius: state == .expanded ? 12 : 3)
             .contentShape(RoundedRectangle(cornerRadius: 10))
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("\(event.title), \(event.category.rawValue), \(event.durationLabel)")
             .onTapGesture { if state != .expanded { onTap() } }
             .alert("Import Error", isPresented: .constant(importError != nil)) {
                 Button("OK") { importError = nil }
@@ -1043,7 +1079,8 @@ struct EventCard: View {
                                     DatePicker("", selection: Binding(
                                         get: { event.endDate ?? Date() },
                                         set: { event.endDate = $0 }
-                                    ), displayedComponents: .date)
+                                    ), in: (event.startDate ?? .distantPast)...,
+                                       displayedComponents: .date)
                                     .labelsHidden()
                                 } else {
                                     Text("Ongoing")

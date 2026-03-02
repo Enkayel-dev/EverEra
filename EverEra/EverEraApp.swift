@@ -53,9 +53,9 @@ struct ArchiveActionsKey: FocusedValueKey {
     typealias Value = ArchiveActions
 }
 
-struct ArchiveActions {
-    var exportArchive: () -> Void
-    var importArchive: () -> Void
+struct ArchiveActions: Sendable {
+    var exportArchive: @Sendable @MainActor () -> Void
+    var importArchive: @Sendable @MainActor () -> Void
 }
 
 extension FocusedValues {

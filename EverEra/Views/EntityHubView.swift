@@ -108,31 +108,6 @@ struct EntityHubView: View {
     }
 }
 
-// MARK: - FilterChip
-
-private struct FilterChip: View {
-    let label: String
-    var systemImage: String? = nil
-    let isSelected: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Group {
-                if let img = systemImage {
-                    Label(label, systemImage: img)
-                } else {
-                    Text(label)
-                }
-            }
-            .font(.caption.weight(.medium))
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-        }
-        .buttonStyle(.glass(isSelected ? .regular.tint(.accentColor) : .regular))
-    }
-}
-
 // MARK: - EntityRowView
 
 struct EntityRowView: View {
@@ -170,5 +145,7 @@ struct EntityRowView: View {
             }
         }
         .padding(.vertical, 4)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(entity.name), \(entity.type.rawValue)\(entity.isActive ? ", active" : ""), \(entity.events.count) event\(entity.events.count == 1 ? "" : "s")")
     }
 }

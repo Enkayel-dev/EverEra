@@ -53,6 +53,9 @@ enum DocumentKind: String, Codable, CaseIterable, Sendable {
 
 @Model
 final class LSDocument {
+    #Unique<LSDocument>([\.id])
+    #Index<LSDocument>([\.importedAt], [\.kind])
+
     var id: UUID
     var displayName: String
     var kind: DocumentKind
@@ -114,15 +117,13 @@ final class LSDocument {
     @MainActor
     func runOCRIfNeeded() {
         guard ocrContent.isEmpty, let url = resolvedURL() else { return }
-        // Capture the URL (a value type) — avoids capturing self across concurrency boundary.
         let capturedURL = url
-        let doc = self
-        Task {
+        Task { @MainActor in
             do {
                 let text = try await OCRService.shared.extractText(from: capturedURL)
-                doc.ocrContent = text
+                self.ocrContent = text
                 // Once OCR finishes, kick off AI summarisation if possible.
-                doc.runSummaryIfNeeded()
+                self.runSummaryIfNeeded()
             } catch {
                 // OCR is best-effort; silently ignore failures.
             }
@@ -138,19 +139,18 @@ final class LSDocument {
               !ocrContent.isEmpty,
               SummaryService.isAvailable else { return }
         let text = ocrContent
-        let doc = self
-        Task {
+        Task { @MainActor in
             do {
                 let summary = try await SummaryService.shared.summarise(ocrText: text)
                 // Store a compact representation: one-liner + key facts joined by newlines.
                 let facts = summary.keyFacts.map { "• \($0)" }.joined(separator: "\n")
-                doc.inferredSummary = [summary.oneLiner, facts]
+                self.inferredSummary = [summary.oneLiner, facts]
                     .filter { !$0.isEmpty }
                     .joined(separator: "\n\n")
                 // Adopt the suggested title if the current display name looks like a raw filename.
                 if !summary.suggestedTitle.isEmpty,
-                   doc.displayName.contains(where: { $0 == "_" || $0.isNumber }) {
-                    doc.displayName = summary.suggestedTitle
+                   self.displayName.contains(where: { $0 == "_" || $0.isNumber }) {
+                    self.displayName = summary.suggestedTitle
                 }
             } catch {
                 // Summarisation is best-effort; silently ignore failures.

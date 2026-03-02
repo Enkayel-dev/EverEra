@@ -39,6 +39,9 @@ enum EntityType: String, Codable, CaseIterable, Sendable {
 
 @Model
 final class LSEntity {
+    #Unique<LSEntity>([\.id])
+    #Index<LSEntity>([\.name], [\.type])
+
     var id: UUID
     var name: String
     var type: EntityType

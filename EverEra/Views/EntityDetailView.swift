@@ -124,7 +124,10 @@ struct EntityDetailView: View {
             properties: entity.properties,
             templateSource: PropertyTemplateStore.templates(for: entity.type),
             onAdd: { showingAddProperty = true },
-            onDelete: { modelContext.delete($0) }
+            onDelete: {
+                modelContext.delete($0)
+                entity.properties.compactDisplayOrder()
+            }
         )
     }
 
@@ -230,6 +233,8 @@ struct EventSummaryRow: View {
                 .foregroundStyle(.tertiary)
         }
         .padding(.vertical, 2)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(event.title), \(event.category.rawValue), \(event.durationLabel)\(event.documents.isEmpty ? "" : ", \(event.documents.count) document\(event.documents.count == 1 ? "" : "s")")")
     }
 }
 
@@ -281,7 +286,8 @@ struct EventDetailView: View {
                                 DatePicker("", selection: Binding(
                                     get: { event.endDate ?? Date() },
                                     set: { event.endDate = $0 }
-                                ), displayedComponents: .date)
+                                ), in: (event.startDate ?? .distantPast)...,
+                                   displayedComponents: .date)
                                 .labelsHidden()
                             } else {
                                 Text("Ongoing").foregroundStyle(.secondary)
@@ -302,7 +308,10 @@ struct EventDetailView: View {
                     properties: event.properties,
                     templateSource: PropertyTemplateStore.templates(for: event.category),
                     onAdd: { showingAddProperty = true },
-                    onDelete: { modelContext.delete($0) }
+                    onDelete: {
+                        modelContext.delete($0)
+                        event.properties.compactDisplayOrder()
+                    }
                 )
 
                 Section("Notes") {

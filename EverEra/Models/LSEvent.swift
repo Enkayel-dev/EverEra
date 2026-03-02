@@ -56,6 +56,9 @@ enum EventCategory: String, Codable, CaseIterable, Sendable {
 
 @Model
 final class LSEvent {
+    #Unique<LSEvent>([\.id])
+    #Index<LSEvent>([\.startDate], [\.category])
+
     var id: UUID
     var title: String
     var category: EventCategory

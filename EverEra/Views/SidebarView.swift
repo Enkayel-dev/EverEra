@@ -55,9 +55,11 @@ struct SidebarView: View {
         case .entityHub where !entities.isEmpty:
             Label(destination.label, systemImage: destination.systemImage)
                 .badge(entities.count)
+                .accessibilityLabel("\(destination.label), \(entities.count) entities")
         case .documents where !documents.isEmpty:
             Label(destination.label, systemImage: destination.systemImage)
                 .badge(documents.count)
+                .accessibilityLabel("\(destination.label), \(documents.count) documents")
         default:
             Label(destination.label, systemImage: destination.systemImage)
         }

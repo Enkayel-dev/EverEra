@@ -23,6 +23,9 @@ enum PropertyValueType: String, Codable, CaseIterable, Sendable {
 
 @Model
 final class LSProperty {
+    #Unique<LSProperty>([\.id])
+    #Index<LSProperty>([\.key])
+
     var id: UUID
     var key: String
     var valueType: PropertyValueType
@@ -86,6 +89,18 @@ final class LSProperty {
         case .date:   return dateValue != nil
         case .number: return numberValue != nil
         case .url:    return !(urlString ?? "").isEmpty
+        }
+    }
+}
+
+// MARK: - Array helpers
+
+extension Array where Element: LSProperty {
+    /// Re-indexes `displayOrder` to 0, 1, 2, … based on current sort order.
+    /// Call after deleting a property to avoid gaps in the sequence.
+    func compactDisplayOrder() {
+        for (index, property) in sorted(by: { $0.displayOrder < $1.displayOrder }).enumerated() {
+            property.displayOrder = index
         }
     }
 }
