@@ -101,18 +101,31 @@ func buildTimelineRows(from events: [LSEvent]) -> [TimelineRow] {
     let calendar = Calendar.current
     let today = calendar.startOfDay(for: Date())
 
-    // Collect the unique start-date strings per month.
+    // Collect unique date strings per month — index by start, end, and today (ongoing).
     var datesByMonth: [MonthKey: Set<String>] = [:]
     var minMK = MonthKey(date: today)
     var maxMK = MonthKey(date: today)
 
     for event in events {
-        guard let start = event.startDate else { continue }
-        let mk = MonthKey(date: start)
-        let ds = TimelineHelpers.dateString(from: start)
-        datesByMonth[mk, default: []].insert(ds)
-        minMK = min(minMK, mk)
-        maxMK = max(maxMK, mk)
+        // Index start date month
+        if let start = event.startDate {
+            let mk = MonthKey(date: start)
+            datesByMonth[mk, default: []].insert(start.dateString)
+            minMK = min(minMK, mk)
+            maxMK = max(maxMK, mk)
+        }
+        // Index end date month
+        if let end = event.endDate {
+            let mk = MonthKey(date: end)
+            datesByMonth[mk, default: []].insert(end.dateString)
+            minMK = min(minMK, mk)
+            maxMK = max(maxMK, mk)
+        }
+        // Index today for ongoing events
+        if event.startDate != nil && event.endDate == nil {
+            let mk = MonthKey(date: today)
+            datesByMonth[mk, default: []].insert(today.dateString)
+        }
     }
 
     // Pad one month on each side so the timeline feels roomy.

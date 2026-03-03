@@ -36,7 +36,7 @@ Navigation uses a `NavigationSplitView` with three primary surfaces:
 
 | Surface | File | Description |
 |---------|------|-------------|
-| **Timeline** | `TimelineView.swift`, `TimelineLayout.swift` | Vertical scrolling timeline with colour-coded lanes, dock-style date magnification, sticky date header, snap-to-month scrolling, and expandable event cards |
+| **Timeline** | `TimelineView.swift`, `TimelineLayout.swift` | Vertical scrolling timeline with colour-coded lanes, dock-style date magnification, sticky date header, snap-to-month scrolling, and expandable event cards. Events render at both start and end months with connector lines. |
 | **Entity Hub** | `EntityHubView.swift` | Filterable list of all entities with type chips; opens `EntityDetailView` in a sheet |
 | **Documents** | `DocumentCenterView.swift` | Filterable list of all documents with full-text search; file import with event attachment |
 
@@ -48,6 +48,43 @@ Supporting views:
 - `PropertyEditorSection.swift` — Reusable property editor for entities and events
 - `AddEntitySheet.swift`, `AddEventSheet.swift`, `AddPropertySheet.swift` — Creation sheets
 - `Shared/FilterChip.swift` — Reusable glass-style filter chip
+
+## Timeline Architecture
+
+The timeline (`TimelineView.swift` + `TimelineLayout.swift`) uses a month-level row grid with placement-based event rendering.
+
+### Key Types
+
+- **`MonthKey`** — Comparable key for a calendar month (year + month). Used for row identity and event indexing.
+- **`TimelineRow`** — Either `.emptyMonth` or `.eventMonth`. Built by `buildTimelineRows()` which indexes events by start date, end date, and today (for ongoing events).
+- **`CardRole`** — An event's temporal role in a given row: `.start`, `.end`, `.ongoing`, `.single`, or `.passThrough`.
+- **`EventPlacement`** — Pairs an `LSEvent` with a `CardRole`. Identifiable via `"\(event.id)-\(role)"`. One event can produce multiple placements (e.g. same-month start+end).
+
+### Rendering Pipeline
+
+1. **`buildTimelineRows(from:)`** (TimelineLayout.swift) — Scans all events, indexes months from start dates, end dates, and today for ongoing events. Produces a newest-to-oldest list of `TimelineRow` values with empty months filling gaps.
+2. **`placementsForRow(_:)`** — For a given `MonthKey`, returns `[EventPlacement]` with pre-computed roles. Handles multi-month events (separate start/end placements), same-month events (both `.start` and `.end` placements), and ongoing events (`.ongoing` at today's month, `.start` at start month).
+3. **`passThroughEvents(for:)`** — Returns events that span this month without starting or ending in it. These get full-height faint connector lines. Excludes both start month and end month (those get card-bearing placements instead).
+4. **`EventMonthRow`** — Groups placements by event ID. Single placements render one card; dual same-month placements stack vertically (end on top, start on bottom). Different events sit side-by-side in an HStack.
+5. **`LaneDotColumn`** — Draws dots per lane, positioned by role: start → bottom, end/ongoing → top.
+6. **`LaneConnectorOverlay`** — Single-pass `Canvas` placed as `.background` on the `LazyVStack`. Receives the full scrollable content size and draws all connector lines in one coordinate space using pre-computed `LaneRowGeometry` (Y offsets + heights). Lines are truly continuous across rows — no per-row stitching. Dots remain as per-row SwiftUI views in `LaneDotColumn` to preserve `PulsingHalo` (`PhaseAnimator`) animation.
+7. **`LaneRowGeometry`** — Pre-computed struct (`yOffset`, `height`, `placements`, `passThroughEvents`) for each row. Built by `laneGeometry` computed property on `TimelineMainView`, using deterministic heights: `EmptyMonthRow` = 40pt; `EventMonthRow` = tallest card group + 16pt padding.
+
+### Connector Line Directions (newest-at-top timeline)
+
+All Y coordinates are in `LazyVStack` content space (global, not row-local).
+
+| Role | Dot Position | Line Direction |
+|------|-------------|----------------|
+| `.start` | Bottom of row | `rowTop` → dot Y (connects to newer pass-through above) |
+| `.end` / `.ongoing` | Top of row | Dot Y → `rowTop + rowHeight` (connects to older pass-through below) |
+| Same-month (start+end) | Both positions | Between end dot Y (top) and start dot Y (bottom) |
+| `.passThrough` | Center | `rowTop` → `rowTop + rowHeight` |
+| `.single` | Center | No line |
+
+### Card States
+
+Cards have three states: `.collapsed` (68pt), `.summary` (120pt), `.expanded` (480pt). Both start and end cards for the same event share a card state keyed by event UUID. Snap-based promotion lifts cards to `.summary` when their month is scrolled to.
 
 ## Service Layer
 

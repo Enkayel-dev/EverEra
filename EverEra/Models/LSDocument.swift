@@ -54,7 +54,7 @@ enum DocumentKind: String, Codable, CaseIterable, Sendable {
 @Model
 final class LSDocument {
     #Unique<LSDocument>([\.id])
-    #Index<LSDocument>([\.importedAt], [\.kind])
+    #Index<LSDocument>([\.importedAt])
 
     var id: UUID
     var displayName: String

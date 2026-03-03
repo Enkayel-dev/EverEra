@@ -79,5 +79,8 @@
         <Rule id="13" title="Accessibility">
             <Requirement>All interactive elements (buttons, rows, cards) must have meaningful accessibility labels. Use `.accessibilityElement(children: .combine)` on composite rows and `.accessibilityLabel` on standalone controls.</Requirement>
         </Rule>
+        <Rule id="14" title="Feature Implementation Completion">
+            <Requirement>All feature implementations must end by: (1) updating Architecture.md to accurately reflect the changes made, and (2) requesting the user to attempt the build. Never attempt to run xcodebuild or build the project yourself.</Requirement>
+        </Rule>
     </StyleRules>
 </EverEraCodingRules>

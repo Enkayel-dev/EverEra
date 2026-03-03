@@ -40,7 +40,7 @@ enum EntityType: String, Codable, CaseIterable, Sendable {
 @Model
 final class LSEntity {
     #Unique<LSEntity>([\.id])
-    #Index<LSEntity>([\.name], [\.type])
+    #Index<LSEntity>([\.name])
 
     var id: UUID
     var name: String
